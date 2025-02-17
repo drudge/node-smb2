@@ -153,9 +153,13 @@ class Tree extends EventEmitter {
   }
 
   async renameFile(path: string, newPath: string) {
+    const desiredAccess =  FilePipePrinterAccess.Delete |
+      FilePipePrinterAccess.WriteAttributes |
+      FilePipePrinterAccess.ReadAttributes |
+      FilePipePrinterAccess.ReadControl;
     const file = new File(this);
     this.registerFile(file);
-    await file.open(path, { desiredAccess: FilePipePrinterAccess.MaximumAllowed });
+    await file.open(path, { desiredAccess });
     await file.rename(newPath);
     await file.close();
   }
