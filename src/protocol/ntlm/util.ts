@@ -3,9 +3,69 @@ import desjs from "des.js";
 import jsmd4 from "js-md4";
 import NegotiateFlag from "./NegotiateFlag";
 
-export const encodeNegotiationMessage = (hostname: string, domain: string) => {
-  hostname = hostname.toUpperCase();
-  domain = domain.toUpperCase();
+enum AvId {
+  MsvAvEOL = 0x0000,
+  MsvAvNbComputerName = 0x0001,
+  MsvAvNbDomainName = 0x0002,
+  MsvAvDnsComputerName = 0x0003,
+  MsvAvDnsDomainName = 0x0004,
+  MsvAvDnsTreeName = 0x0005,
+  MsvAvFlags = 0x0006,
+  MsvAvTimestamp = 0x0007,
+  MsvAvRestrictions = 0x0008,
+  MsvAvTargetName = 0x0009,
+  MsvAvChannelBindings = 0x000A
+}
+
+// Check if we should use NTLMv1
+const isNTLMv1 = (negotiateFlags: number): boolean => {
+  return !(negotiateFlags & NegotiateFlag.ExtendedSessionSecurity);
+};
+
+// Create NTLM v1 response
+const createNTLMv1Response = (ntHash: Buffer, serverChallenge: Buffer): Buffer => {
+  return createResponse(ntHash, serverChallenge);
+};
+
+// Create LM v1 response
+const createLMv1Response = (password: string, serverChallenge: Buffer): Buffer => {
+  const lmHash = createLmHash(password);
+  return createResponse(lmHash, serverChallenge);
+};
+
+const createTargetInfo = (hostname: string, domain: string): Buffer => {
+  // Calculate required buffer size
+  const hostnameLength = Buffer.byteLength(hostname, 'utf16le');
+  const domainLength = Buffer.byteLength(domain, 'utf16le');
+  
+  // 4 bytes for each AvId+AvLen pair, plus string lengths, plus 4 bytes for EOL
+  const bufferSize = (4 + hostnameLength) + (4 + domainLength) + 4;
+  const buffer = Buffer.alloc(bufferSize);
+  
+  let offset = 0;
+  
+  // Add computer name
+  buffer.writeUInt16LE(AvId.MsvAvNbComputerName, offset);
+  buffer.writeUInt16LE(hostnameLength, offset + 2);
+  buffer.write(hostname, offset + 4, hostnameLength, 'utf16le');
+  offset += 4 + hostnameLength;
+  
+  // Add domain name
+  buffer.writeUInt16LE(AvId.MsvAvNbDomainName, offset);
+  buffer.writeUInt16LE(domainLength, offset + 2);
+  buffer.write(domain, offset + 4, domainLength, 'utf16le');
+  offset += 4 + domainLength;
+  
+  // Add terminator (MsvAvEOL)
+  buffer.writeUInt16LE(AvId.MsvAvEOL, offset);
+  buffer.writeUInt16LE(0, offset + 2);
+  
+  return buffer;
+};
+
+export const encodeNegotiationMessage = (h: string, d: string) => {
+  const hostname = h.toUpperCase();
+  const domain = d.toUpperCase();
 
   const hostnameLength = Buffer.byteLength(hostname, "ascii");
   const domainLength = Buffer.byteLength(domain, "ascii");
@@ -21,7 +81,7 @@ export const encodeNegotiationMessage = (hostname: string, domain: string) => {
   buffer.writeUInt32LE(1, offset);
   offset += 4;
 
-  const negotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign;
+  const negotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign | NegotiateFlag.ExtendedSessionSecurity | NegotiateFlag.TargetInfo | NegotiateFlag.Version;
   buffer.writeUInt32LE(negotiateFlags, offset);
   offset += 4;
 
@@ -113,7 +173,7 @@ export const encodeChallengeMessage = (negotiateFlags: number) => {
   buffer.writeUInt32LE(negotiateFlags, offset);
   offset += 4;
 
-  generateServerChallenge().copy(buffer, offset);
+  generateServerChallenge().copy(new Uint8Array(buffer), offset);
   offset += 8;
 
   buffer.fill(0, offset, offset + 8);
@@ -156,26 +216,44 @@ export const decodeChallengeMessage = (buffer: Buffer) => {
   return serverChallenge;
 };
 
-export const encodeAuthenticationMessage = (username: string, hostname: string, domain: string, nonce: Buffer, password: string) => {
-  hostname = hostname.toUpperCase();
-  domain = domain.toUpperCase();
+export const encodeAuthenticationMessage = (
+  username: string, 
+  h: string, 
+  d: string, 
+  serverChallenge: Buffer, 
+  password: string,
+  negotiateFlags: number = NegotiateFlag.ExtendedSessionSecurity | NegotiateFlag.TargetInfo
+) => {
+  const hostname = h.toUpperCase();
+  const domain = d.toUpperCase();
 
-  const lmHash = Buffer.alloc(21);
-  createLmHash(password).copy(lmHash);
-  lmHash.fill(0x00, 16);
+  const ntHash = createNtHash(password);
+  let ntResponse: Buffer;
+  let lmResponse: Buffer;
 
-  const ntHash = Buffer.alloc(21);
-  createNtHash(password).copy(ntHash);
-  ntHash.fill(0x00, 16);
+  if (isNTLMv1(negotiateFlags)) {
+    // NTLMv1 mode
+    ntResponse = createNTLMv1Response(ntHash, serverChallenge);
+    lmResponse = createLMv1Response(password, serverChallenge);
+  } else {
+    // NTLMv2 mode
+    const ntlmv2Hash = createNtlmV2Hash(username, domain, ntHash);
+    const clientChallenge = crypto.randomBytes(8);
+    const timestamp = Buffer.alloc(8);
+    const now = new Date().getTime() + 11644473600000;
+    timestamp.writeBigUInt64LE(BigInt(now * 10000));
 
-  const lmResponse = createResponse(lmHash, nonce);
-  const ntResponse = createResponse(ntHash, nonce);
+    const targetInfo = createTargetInfo(hostname, domain);
+    
+    ntResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, timestamp, targetInfo);
+    lmResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, Buffer.alloc(8), Buffer.alloc(0));
+  }
 
   const usernameLength = Buffer.byteLength(username, "ucs2");
   const hostnameLength = Buffer.byteLength(hostname, "ucs2");
   const domainLength = Buffer.byteLength(domain, "ucs2");
-  const lmResponseLength = 0x18;
-  const ntResponseLength = 0x18;
+  const lmResponseLength = lmResponse.length;
+  const ntResponseLength = ntResponse.length;
 
   const domainOffset = 0x40;
   const usernameOffset = domainOffset + domainLength;
@@ -184,79 +262,67 @@ export const encodeAuthenticationMessage = (username: string, hostname: string, 
   const ntResponseOffset = lmResponseOffset + lmResponseLength;
 
   let offset = 0;
-  const messageLength = 64 + domainLength + usernameLength + hostnameLength + lmResponseLength + ntResponseLength;
-  const buffer = Buffer.alloc(messageLength);
+  const buffer = Buffer.alloc(ntResponseOffset + ntResponseLength);
 
-  buffer.write("NTLMSSP", offset, 7, "ascii"); // byte protocol[8];
+  buffer.write("NTLMSSP", offset, 7, "ascii");
   offset += 7;
   buffer.writeUInt8(0, offset);
-  offset++;
+  offset += 1;
 
-  buffer.writeUInt8(0x03, offset); // byte type;
-  offset++;
+  buffer.writeUInt32LE(3, offset);
+  offset += 4;
 
-  buffer.fill(0x00, offset, offset + 3); // byte zero[3];
-  offset += 3;
+  buffer.writeUInt16LE(lmResponseLength, offset);
+  offset += 2;
+  buffer.writeUInt16LE(lmResponseLength, offset);
+  offset += 2;
+  buffer.writeUInt32LE(lmResponseOffset, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(lmResponseLength, offset); // short lm_resp_len;
+  buffer.writeUInt16LE(ntResponseLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(lmResponseLength, offset); // short lm_resp_len;
+  buffer.writeUInt16LE(ntResponseLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(lmResponseOffset, offset); // short lm_resp_off;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 2); // byte zero[2];
-  offset += 2;
+  buffer.writeUInt32LE(ntResponseOffset, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(ntResponseLength, offset); // short nt_resp_len;
+  buffer.writeUInt16LE(domainLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(ntResponseLength, offset); // short nt_resp_len;
+  buffer.writeUInt16LE(domainLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(ntResponseOffset, offset); // short nt_resp_off;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 2); // byte zero[2];
-  offset += 2;
+  buffer.writeUInt32LE(domainOffset, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(domainLength, offset); // short dom_len;
+  buffer.writeUInt16LE(usernameLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(domainLength, offset); // short dom_len;
+  buffer.writeUInt16LE(usernameLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(domainOffset, offset); // short dom_off;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 2); // byte zero[2];
-  offset += 2;
+  buffer.writeUInt32LE(usernameOffset, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(usernameLength, offset); // short user_len;
+  buffer.writeUInt16LE(hostnameLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(usernameLength, offset); // short user_len;
+  buffer.writeUInt16LE(hostnameLength, offset);
   offset += 2;
-  buffer.writeUInt16LE(usernameOffset, offset); // short user_off;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 2); // byte zero[2];
-  offset += 2;
+  buffer.writeUInt32LE(hostnameOffset, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(hostnameLength, offset); // short host_len;
+  buffer.writeUInt16LE(0, offset);
   offset += 2;
-  buffer.writeUInt16LE(hostnameLength, offset); // short host_len;
+  buffer.writeUInt16LE(0, offset);
   offset += 2;
-  buffer.writeUInt16LE(hostnameOffset, offset); // short host_off;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 6); // byte zero[6];
-  offset += 6;
+  buffer.writeUInt32LE(0, offset);
+  offset += 4;
 
-  buffer.writeUInt16LE(messageLength, offset); // short msg_len;
-  offset += 2;
-  buffer.fill(0x00, offset, offset + 2); // byte zero[2];
-  offset += 2;
-
-  const negotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign;
   buffer.writeUInt32LE(negotiateFlags, offset);
   offset += 4;
 
+  // Write domain, username, hostname and responses
   buffer.write(domain, domainOffset, domainLength, "ucs2");
   buffer.write(username, usernameOffset, usernameLength, "ucs2");
   buffer.write(hostname, hostnameOffset, hostnameLength, "ucs2");
-  lmResponse.copy(buffer, lmResponseOffset, 0, lmResponseLength);
-  ntResponse.copy(buffer, ntResponseOffset, 0, ntResponseLength);
+  lmResponse.copy(buffer, lmResponseOffset);
+  ntResponse.copy(buffer, ntResponseOffset);
 
   return buffer;
 };
@@ -320,24 +386,17 @@ const binaryArray2bytes = (array: number[]): Buffer => {
     if (i + 7 > array.length) break;
 
     const binString1 =
-      "" + array[i] + "" + array[i + 1] + "" + array[i + 2] + "" + array[i + 3];
+      `${array[i]}${array[i + 1]}${array[i + 2]}${array[i + 3]}`;
     const binString2 =
-      "" +
-      array[i + 4] +
-      "" +
-      array[i + 5] +
-      "" +
-      array[i + 6] +
-      "" +
-      array[i + 7];
+      `${array[i + 4]}${array[i + 5]}${array[i + 6]}${array[i + 7]}`;
     const hexchar1 = binary2hex[binString1];
     const hexchar2 = binary2hex[binString2];
 
-    const buf = Buffer.from(hexchar1 + "" + hexchar2, "hex");
+    const buf = Buffer.from(`${hexchar1}${hexchar2}`, "hex");
     bufArray.push(buf);
   }
 
-  return Buffer.concat(bufArray);
+  return Buffer.concat(bufArray.map(buf => new Uint8Array(buf)));
 };
 
 const insertZerosEvery7Bits = (buf: Buffer): Buffer => {
@@ -353,22 +412,22 @@ const insertZerosEvery7Bits = (buf: Buffer): Buffer => {
   return binaryArray2bytes(newBinaryArray);
 };
 
-const createLmHash = (password: string): Buffer => {
-  password = password.toUpperCase();
+const createLmHash = (p: string): Buffer => {
+  const password = p.toUpperCase();
   const passwordBytes = Buffer.from(password, "ascii");
 
   const passwordBytesPadded = Buffer.alloc(14);
   passwordBytesPadded.fill("\0");
   let sourceEnd = 14;
   if (passwordBytes.length < 14) sourceEnd = passwordBytes.length;
-  passwordBytes.copy(passwordBytesPadded, 0, 0, sourceEnd);
+  passwordBytes.copy(new Uint8Array(passwordBytesPadded), 0, 0, sourceEnd);
 
   const firstPart = passwordBytesPadded.slice(0, 7);
   const secondPart = passwordBytesPadded.slice(7);
 
   function encrypt(buf) {
     const key = insertZerosEvery7Bits(buf);
-    const des = desjs.DES.create({ type: "encrypt", key: key });
+    const des = desjs.DES.create({ type: "encrypt", key });
     const magicKey = Buffer.from("KGS!@#$%", "ascii");
     const encrypted = des.update(magicKey);
     return Buffer.from(encrypted);
@@ -377,7 +436,7 @@ const createLmHash = (password: string): Buffer => {
   const firstPartEncrypted = encrypt(firstPart);
   const secondPartEncrypted = encrypt(secondPart);
 
-  return Buffer.concat([firstPartEncrypted, secondPartEncrypted]);
+  return Buffer.concat([new Uint8Array(firstPartEncrypted), new Uint8Array(secondPartEncrypted)]);
 };
 
 const createNtHash = (password: string): Buffer => {
@@ -387,10 +446,33 @@ const createNtHash = (password: string): Buffer => {
   return Buffer.from(md4.digest());
 };
 
+const createNtlmV2Hash = (username: string, domain: string, ntHash: Buffer): Buffer => {
+  const identity = Buffer.from(username.toUpperCase() + domain.toUpperCase(), 'ucs2');
+  const hmac = crypto.createHmac('md5', ntHash);
+  return hmac.update(identity).digest();
+};
+
+const createNtlmV2Response = (ntlmv2Hash: Buffer, serverChallenge: Buffer, clientChallenge: Buffer, timestamp: Buffer, targetInfo: Buffer): Buffer => {
+  const temp = Buffer.concat([
+    Buffer.from([0x01, 0x01]), // Signature for NTLMv2
+    Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), // Reserved
+    timestamp,
+    clientChallenge,
+    Buffer.from([0x00, 0x00, 0x00, 0x00]), // Reserved
+    targetInfo
+  ]);
+
+  const hmac = crypto.createHmac('md5', ntlmv2Hash);
+  hmac.update(serverChallenge);
+  hmac.update(temp);
+  
+  return Buffer.concat([hmac.digest(), temp]);
+};
+
 const createResponse = (hash: Buffer, nonce: Buffer) => {
   const passHashPadded = Buffer.alloc(21);
   passHashPadded.fill("\0");
-  hash.copy(passHashPadded, 0, 0, hash.length);
+  hash.copy(new Uint8Array(passHashPadded), 0, 0, hash.length);
 
   const resArray = [];
 

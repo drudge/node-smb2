@@ -1,10 +1,10 @@
 import File from "./File";
-import Session from "./Session";
+import type Session from "./Session";
 import Directory from "./Directory";
 import { EventEmitter } from "events";
-import Header from "../protocol/smb2/Header";
+import type Header from "../protocol/smb2/Header";
 import * as util from "../protocol/util";
-import Response from "../protocol/smb2/Response";
+import type Response from "../protocol/smb2/Response";
 import PacketType from "../protocol/smb2/PacketType";
 import DirectoryAccess from "../protocol/smb2/DirectoryAccess";
 import FilePipePrinterAccess from "../protocol/smb2/FilePipePrinterAccess";
@@ -17,8 +17,8 @@ interface Tree {
 
 class Tree extends EventEmitter {
   _id: number;
-  connected: boolean = false;
-  connecting: boolean = false;
+  connected = false;
+  connecting = false;
   openFiles: File[] = [];
   openDirectories: Directory[] = [];
 

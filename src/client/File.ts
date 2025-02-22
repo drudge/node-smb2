@@ -84,7 +84,7 @@ class File extends EventEmitter {
   }
 
   async rename(newPath: string) {
-    const newPathUCS2 = Buffer.from(newPath, "ucs2");
+    const newPathUCS2 = new Uint8Array(Buffer.from(newPath, "ucs2"));
     const buffer = Buffer.alloc(1 + 7 + 8 + 4 + newPathUCS2.length);
 
     buffer.fill(0x00);
@@ -168,7 +168,7 @@ class File extends EventEmitter {
     const buffer = Buffer.alloc(fileSize);
     for (let index = 0; index < chunkCount; index++) {
       const offset = index * maxReadChunkLength;
-      ((await this.readChunk(index, offset)) as Buffer).copy(buffer, offset);
+      ((await this.readChunk(index, offset)) as Buffer).copy(new Uint8Array(buffer), offset);
     }
 
     return buffer;
@@ -178,7 +178,7 @@ class File extends EventEmitter {
     const fileSize = Number(this.fileSize);
     return Readable.from(async function* read() {
       const chunkCount = Math.ceil(fileSize / maxReadChunkLength);
-  
+
       for (let index = 0; index < chunkCount; index++) {
         const offset = index * maxReadChunkLength;
         yield ((await this.readChunk(index, offset)) as Buffer);
