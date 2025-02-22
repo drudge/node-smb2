@@ -1,5 +1,5 @@
-import Tree from "./Tree";
 import { EventEmitter } from "events";
+import type Tree from "./Tree";
 import * as util from "../protocol/util";
 import StatusCode from "../protocol/smb2/StatusCode";
 import PacketType from "../protocol/smb2/PacketType";
@@ -84,16 +84,17 @@ class File extends EventEmitter {
   }
 
   async rename(newPath: string) {
-    const newPathUCS2 = new Uint8Array(Buffer.from(newPath, "ucs2"));
-    const buffer = Buffer.alloc(1 + 7 + 8 + 4 + newPathUCS2.length);
-
-    buffer.fill(0x00);
-    buffer.writeUInt8(1, 0);
+    const newPathUCS2 = new Uint8Array(Buffer.from(util.toWindowsFilePath(newPath), "ucs2"));
+    const buffer = Buffer.alloc(20 + newPathUCS2.length);
+    
+    buffer.writeUInt8(0, 0);  // 0 = don't replace if exists
+    buffer.fill(0, 1, 8);
+    buffer.writeBigUInt64LE(BigInt(0), 8);
     buffer.writeUInt32LE(newPathUCS2.length, 16);
-    buffer.fill(newPathUCS2, 20);
+    buffer.set(newPathUCS2, 20);
 
     await this.setInfo(FileInfoClass.RenameInformation, buffer);
-  }
+}
 
   async setSize(size: bigint) {
     const buffer = Buffer.alloc(8);

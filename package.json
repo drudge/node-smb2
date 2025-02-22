@@ -34,7 +34,7 @@
     "moment-timezone": "^0.5.31"
   },
   "devDependencies": {
-    "@types/node": "^18.19.1",
+    "@types/node": "^13.7.4",
     "nodemon": "^2.0.4",
     "ts-node": "^9.0.0",
     "tslint": "^6.1.0",
