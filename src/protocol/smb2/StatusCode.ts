@@ -4,7 +4,8 @@ enum StatusCode {
   MoreProcessingRequired = 0xc0000016,
   FileNameNotFound = 0xc0000034,
   FilePathNotFound = 0xc000003a,
-  FileClosed = 0xc0000128
+  FileClosed = 0xc0000128,
+  SharingViolation = 0xc0000043 // Status code for "Sharing Violation - File is in use by another process"
 }
 
 export default StatusCode;

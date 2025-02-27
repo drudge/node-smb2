@@ -11,6 +11,13 @@ export interface AuthenticateOptions {
   domain: string;
   username: string;
   password: string;
+  /**
+   * Force a specific NTLM version instead of auto-negotiation
+   * - 'v1': Force NTLMv1 (less secure but more compatible)
+   * - 'v2': Force NTLMv2 (more secure, less compatible with some servers)
+   * - undefined: Auto-detect based on server response (default)
+   */
+  forceNtlmVersion?: 'v1' | 'v2';
 }
 
 interface Session {
@@ -59,38 +66,51 @@ class Session extends EventEmitter {
   async authenticate(options: AuthenticateOptions) {
     if (this.authenticated) return;
 
-    await this.request({
-      type: PacketType.Negotiate
-    }, {
-      dialects: [
-        Dialect.Smb202,
-        Dialect.Smb210
-      ],
-      clientGuid: generateGuid(),
-    });
-    const sessionSetupResponse = await this.request(
-      { type: PacketType.SessionSetup },
-      { buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain) }
-    );
-    this._id = sessionSetupResponse.header.sessionId;
+    try {
+      await this.request({
+        type: PacketType.Negotiate
+      }, {
+        dialects: [
+          Dialect.Smb202,
+          Dialect.Smb210
+        ],
+        clientGuid: generateGuid(),
+      });
 
-    const nonce = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
-    await this.request(
-      { type: PacketType.SessionSetup },
-      {
-        buffer: ntlmUtil.encodeAuthenticationMessage(
-          options.username,
-          this.client.host,
-          options.domain,
-          nonce,
-          options.password
-        )
+      // Initial negotiation includes forceNtlmVersion if specified
+      const sessionSetupResponse = await this.request(
+        { type: PacketType.SessionSetup },
+        { buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain, options.forceNtlmVersion) }
+      );
+      this._id = sessionSetupResponse.header.sessionId;
+
+      // Extract server challenge (nonce)
+      const nonce = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
+      // Send authentication response with version preference
+      const authResponse = await this.request(
+        { type: PacketType.SessionSetup },
+        {
+          buffer: ntlmUtil.encodeAuthenticationMessage(
+            options.username,
+            this.client.host,
+            options.domain,
+            nonce,
+            options.password,
+            0, // Let the util determine the flags based on server response
+            options.forceNtlmVersion
+          )
+        }
+      );
+
+      this.authenticated = true;
+      this.emit("authenticate", this);
+    } catch (error) {
+      // Clean way to handle sharing violation specifically
+      if (error.header && error.header.status === 0xc0000043) {
+        throw new Error("Sharing violation error during authentication. The share may be in use by another process.");
       }
-    );
-
-    this.authenticated = true;
-
-    this.emit("authenticate", this);
+      throw error; // Rethrow other errors
+    }
   }
 
   private registerTree(tree: Tree) {

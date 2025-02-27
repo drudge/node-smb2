@@ -84,15 +84,14 @@ class File extends EventEmitter {
   }
 
   async rename(newPath: string) {
-    const newPathUCS2 = new Uint8Array(Buffer.from(util.toWindowsFilePath(newPath), "ucs2"));
+    const newPathUCS2 = Buffer.from(util.toWindowsFilePath(newPath), "ucs2");
     const buffer = Buffer.alloc(20 + newPathUCS2.length);
-    
     buffer.writeUInt8(0, 0);  // 0 = don't replace if exists
     buffer.fill(0, 1, 8);
     buffer.writeBigUInt64LE(BigInt(0), 8);
     buffer.writeUInt32LE(newPathUCS2.length, 16);
-    buffer.set(newPathUCS2, 20);
-
+    // Use Buffer.copy instead of Uint8Array
+    newPathUCS2.copy(buffer, 20);
     await this.setInfo(FileInfoClass.RenameInformation, buffer);
 }
 
@@ -169,7 +168,7 @@ class File extends EventEmitter {
     const buffer = Buffer.alloc(fileSize);
     for (let index = 0; index < chunkCount; index++) {
       const offset = index * maxReadChunkLength;
-      ((await this.readChunk(index, offset)) as Buffer).copy(new Uint8Array(buffer), offset);
+      ((await this.readChunk(index, offset)) as Buffer).copy(buffer, offset);
     }
 
     return buffer;

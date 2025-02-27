@@ -37,33 +37,27 @@ const createTargetInfo = (hostname: string, domain: string): Buffer => {
   // Calculate required buffer size
   const hostnameLength = Buffer.byteLength(hostname, 'utf16le');
   const domainLength = Buffer.byteLength(domain, 'utf16le');
-  
   // 4 bytes for each AvId+AvLen pair, plus string lengths, plus 4 bytes for EOL
   const bufferSize = (4 + hostnameLength) + (4 + domainLength) + 4;
   const buffer = Buffer.alloc(bufferSize);
-  
   let offset = 0;
-  
   // Add computer name
   buffer.writeUInt16LE(AvId.MsvAvNbComputerName, offset);
   buffer.writeUInt16LE(hostnameLength, offset + 2);
   buffer.write(hostname, offset + 4, hostnameLength, 'utf16le');
   offset += 4 + hostnameLength;
-  
   // Add domain name
   buffer.writeUInt16LE(AvId.MsvAvNbDomainName, offset);
   buffer.writeUInt16LE(domainLength, offset + 2);
   buffer.write(domain, offset + 4, domainLength, 'utf16le');
   offset += 4 + domainLength;
-  
   // Add terminator (MsvAvEOL)
   buffer.writeUInt16LE(AvId.MsvAvEOL, offset);
   buffer.writeUInt16LE(0, offset + 2);
-  
   return buffer;
 };
 
-export const encodeNegotiationMessage = (h: string, d: string) => {
+export const encodeNegotiationMessage = (h: string, d: string, forceNtlmVersion?: 'v1' | 'v2') => {
   const hostname = h.toUpperCase();
   const domain = d.toUpperCase();
 
@@ -81,7 +75,17 @@ export const encodeNegotiationMessage = (h: string, d: string) => {
   buffer.writeUInt32LE(1, offset);
   offset += 4;
 
-  const negotiateFlags = NegotiateFlag.UnicodeEncoding | NegotiateFlag.NTLMSessionSecurity | NegotiateFlag.AlwaysSign | NegotiateFlag.ExtendedSessionSecurity | NegotiateFlag.TargetInfo | NegotiateFlag.Version;
+  // Base negotiate flags common to both versions
+  let negotiateFlags = NegotiateFlag.UnicodeEncoding |
+                      NegotiateFlag.NTLMSessionSecurity |
+                      NegotiateFlag.AlwaysSign;
+  // Add version-specific flags
+  if (forceNtlmVersion === 'v2' || (!forceNtlmVersion && process.env.NODE_SMB2_DEFAULT_NTLM !== 'v1')) {
+    // NTLMv2 flags - more secure
+    negotiateFlags |= NegotiateFlag.ExtendedSessionSecurity |
+                     NegotiateFlag.TargetInfo |
+                     NegotiateFlag.Version;
+  }
   buffer.writeUInt32LE(negotiateFlags, offset);
   offset += 4;
 
@@ -217,36 +221,60 @@ export const decodeChallengeMessage = (buffer: Buffer) => {
 };
 
 export const encodeAuthenticationMessage = (
-  username: string, 
-  h: string, 
-  d: string, 
-  serverChallenge: Buffer, 
+  username: string,
+  h: string,
+  d: string,
+  serverChallenge: Buffer,
   password: string,
-  negotiateFlags: number = NegotiateFlag.ExtendedSessionSecurity | NegotiateFlag.TargetInfo
+  negotiateFlags: number = 0,
+  forceNtlmVersion?: 'v1' | 'v2'
 ) => {
   const hostname = h.toUpperCase();
   const domain = d.toUpperCase();
-
   const ntHash = createNtHash(password);
   let ntResponse: Buffer;
   let lmResponse: Buffer;
-
-  if (isNTLMv1(negotiateFlags)) {
-    // NTLMv1 mode
-    ntResponse = createNTLMv1Response(ntHash, serverChallenge);
-    lmResponse = createLMv1Response(password, serverChallenge);
+  // Determine which NTLM version to use
+  const useV1 = forceNtlmVersion === 'v1' ||
+               (isNTLMv1(negotiateFlags) && forceNtlmVersion !== 'v2') ||
+               (process.env.NODE_SMB2_DEFAULT_NTLM === 'v1' && !forceNtlmVersion);
+  if (useV1) {
+    // NTLMv1 mode (simpler, more compatible)
+    console.log("Using NTLMv1 authentication");
+    // Create padded hashes
+    const lmHash = Buffer.alloc(21);
+    createLmHash(password).copy(lmHash);
+    lmHash.fill(0x00, 16);
+    const ntHashPadded = Buffer.alloc(21);
+    ntHash.copy(ntHashPadded);
+    ntHashPadded.fill(0x00, 16);
+    ntResponse = createResponse(ntHashPadded, serverChallenge);
+    lmResponse = createResponse(lmHash, serverChallenge);
   } else {
-    // NTLMv2 mode
-    const ntlmv2Hash = createNtlmV2Hash(username, domain, ntHash);
-    const clientChallenge = crypto.randomBytes(8);
-    const timestamp = Buffer.alloc(8);
-    const now = new Date().getTime() + 11644473600000;
-    timestamp.writeBigUInt64LE(BigInt(now * 10000));
-
-    const targetInfo = createTargetInfo(hostname, domain);
-    
-    ntResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, timestamp, targetInfo);
-    lmResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, Buffer.alloc(8), Buffer.alloc(0));
+    // NTLMv2 mode (more secure, newer servers)
+    console.log("Using NTLMv2 authentication");
+    try {
+      const ntlmv2Hash = createNtlmV2Hash(username, domain, ntHash);
+      const clientChallenge = crypto.randomBytes(8);
+      // Create timestamp (Windows file time format)
+      const timestamp = Buffer.alloc(8);
+      const now = new Date().getTime() + 11644473600000; // Convert to Windows file time
+      timestamp.writeBigUInt64LE(BigInt(now * 10000));
+      const targetInfo = createTargetInfo(hostname, domain);
+      ntResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, timestamp, targetInfo);
+      lmResponse = createLMv2Response(ntlmv2Hash, serverChallenge, clientChallenge);
+    } catch (err) {
+      console.error("Error creating NTLMv2 response, falling back to NTLMv1:", err);
+      // Fall back to NTLMv1 if NTLMv2 creation fails
+      const lmHash = Buffer.alloc(21);
+      createLmHash(password).copy(lmHash);
+      lmHash.fill(0x00, 16);
+      const ntHashPadded = Buffer.alloc(21);
+      ntHash.copy(ntHashPadded);
+      ntHashPadded.fill(0x00, 16);
+      ntResponse = createResponse(ntHashPadded, serverChallenge);
+      lmResponse = createResponse(lmHash, serverChallenge);
+    }
   }
 
   const usernameLength = Buffer.byteLength(username, "ucs2");
@@ -321,10 +349,18 @@ export const encodeAuthenticationMessage = (
   buffer.write(domain, domainOffset, domainLength, "ucs2");
   buffer.write(username, usernameOffset, usernameLength, "ucs2");
   buffer.write(hostname, hostnameOffset, hostnameLength, "ucs2");
-  lmResponse.copy(buffer, lmResponseOffset);
-  ntResponse.copy(buffer, ntResponseOffset);
+  // Copy responses safely to prevent buffer issues
+  lmResponse.copy(buffer, lmResponseOffset, 0, lmResponseLength);
+  ntResponse.copy(buffer, ntResponseOffset, 0, ntResponseLength);
 
   return buffer;
+};
+
+// Helper for creating LMv2 response (simplified for compatibility)
+const createLMv2Response = (ntlmv2Hash: Buffer, serverChallenge: Buffer, clientChallenge: Buffer): Buffer => {
+  const hmac = crypto.createHmac('md5', ntlmv2Hash);
+  hmac.update(Buffer.concat([serverChallenge, clientChallenge]));
+  return Buffer.concat([hmac.digest(), clientChallenge]);
 };
 
 export const generateServerChallenge = () => {
@@ -396,7 +432,7 @@ const binaryArray2bytes = (array: number[]): Buffer => {
     bufArray.push(buf);
   }
 
-  return Buffer.concat(bufArray.map(buf => new Uint8Array(buf)));
+  return Buffer.concat(bufArray);
 };
 
 const insertZerosEvery7Bits = (buf: Buffer): Buffer => {
@@ -465,7 +501,6 @@ const createNtlmV2Response = (ntlmv2Hash: Buffer, serverChallenge: Buffer, clien
   const hmac = crypto.createHmac('md5', ntlmv2Hash);
   hmac.update(serverChallenge);
   hmac.update(temp);
-  
   return Buffer.concat([hmac.digest(), temp]);
 };
 

@@ -3,13 +3,24 @@ import smb2 from "../src";
 const directoryName = "/directory";
 const filename = "/file.txt";
 
-export default async (host: string, domain: string, username: string, password: string, share: string) => {
+export default async (
+  host: string, 
+  domain: string, 
+  username: string, 
+  password: string, 
+  share: string,
+  forceNtlmVersion?: 'v1' | 'v2'
+) => {
   try {
+    console.log(`Connecting to ${host}\\${share} as ${domain}\\${username}` + 
+                (forceNtlmVersion ? ` (forcing NTLM ${forceNtlmVersion})` : ''));
+    
     const client = new smb2.Client(host);
     const session = await client.authenticate({
       domain,
       username,
-      password
+      password,
+      forceNtlmVersion
     });
     const tree = await session.connectTree(share);
 
