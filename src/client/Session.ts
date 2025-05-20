@@ -3,6 +3,7 @@ import Client from "./Client";
 import { EventEmitter } from "events";
 import Dialect from "../protocol/smb2/Dialect";
 import Header from "../protocol/smb2/Header";
+import * as util from "../protocol/util";
 import * as ntlmUtil from "../protocol/ntlm/util";
 import PacketType from "../protocol/smb2/PacketType";
 
@@ -64,7 +65,8 @@ class Session extends EventEmitter {
       dialects: [
         Dialect.Smb202,
         Dialect.Smb210
-      ]
+      ],
+      clientGuid: util.generateGuid()
     });
     const sessionSetupResponse = await this.request(
       { type: PacketType.SessionSetup },
