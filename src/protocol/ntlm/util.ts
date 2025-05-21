@@ -368,7 +368,7 @@ const createLmHash = (password: string): Buffer => {
 
   function encrypt(buf) {
     const key = insertZerosEvery7Bits(buf);
-    const des = desjs.DES.create({ type: "encrypt", key: key });
+    const des = desjs.DES.create({ type: "encrypt", key });
     const magicKey = Buffer.from("KGS!@#$%", "ascii");
     const encrypted = des.update(magicKey);
     return Buffer.from(encrypted);
