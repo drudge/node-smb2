@@ -483,7 +483,7 @@ const createNtHash = (password: string): Buffer => {
 };
 
 const createNtlmV2Hash = (username: string, domain: string, ntHash: Buffer): Buffer => {
-  const identity = Buffer.from(username.toUpperCase() + domain.toUpperCase(), 'ucs2');
+  const identity = Buffer.from(username + domain.toUpperCase(), 'ucs2');
   const hmac = crypto.createHmac('md5', ntHash);
   return hmac.update(identity).digest();
 };

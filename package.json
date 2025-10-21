@@ -3,7 +3,7 @@
   "description": "A SMB2 implementation in TypeScript",
   "repository": "https://github.com/drudge/node-smb2",
   "bugs": "https://github.com/drudge/node-smb2/issues",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "author": "Nick Penree <nick@penree.com>",
   "main": "dist/index.js",
   "typings": "dist/index.d.ts",
