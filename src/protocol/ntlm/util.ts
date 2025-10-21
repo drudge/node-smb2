@@ -254,7 +254,8 @@ export const encodeAuthenticationMessage = (
     // NTLMv2 mode (more secure, newer servers)
     console.log("Using NTLMv2 authentication");
     try {
-      const ntlmv2Hash = createNtlmV2Hash(username, domain, ntHash);
+      // Per MS-NLMP spec: domain should be original case for NTLMv2 hash
+      const ntlmv2Hash = createNtlmV2Hash(username, d, ntHash);
       const clientChallenge = crypto.randomBytes(8);
       // Create timestamp (Windows file time format)
       const timestamp = Buffer.alloc(8);
@@ -483,7 +484,8 @@ const createNtHash = (password: string): Buffer => {
 };
 
 const createNtlmV2Hash = (username: string, domain: string, ntHash: Buffer): Buffer => {
-  const identity = Buffer.from(username + domain.toUpperCase(), 'ucs2');
+  // Per MS-NLMP spec: username should be uppercase, domain should be original case
+  const identity = Buffer.from(username.toUpperCase() + domain, 'ucs2');
   const hmac = crypto.createHmac('md5', ntHash);
   return hmac.update(identity).digest();
 };
