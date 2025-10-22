@@ -1,13 +1,44 @@
 {
   "compilerOptions": {
-    "declaration": true,
-    "outDir": "./dist",
-    "baseUrl": "./src",
-    "moduleResolution": "node",
+    /* Language and Environment */
+    "target": "ES2022",
     "module": "commonjs",
-    "target": "esnext",
-    "esModuleInterop": true
+
+    /* Modules */
+    "moduleResolution": "node",
+    "baseUrl": "./src",
+    "resolveJsonModule": true,
+
+    /* Emit */
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+
+    /* Interop Constraints */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Type Checking - Gradually enable strict mode */
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": true,
+
+    /* Completeness */
+    "skipLibCheck": true
   },
   "include": [
-    "src" ]
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
 }
