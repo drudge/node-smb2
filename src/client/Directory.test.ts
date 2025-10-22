@@ -321,4 +321,138 @@ describe("Directory", () => {
       );
     });
   });
+
+  describe("flush", () => {
+    beforeEach(async () => {
+      await directory.open("/test");
+    });
+
+    it("should flush directory", async () => {
+      await directory.flush();
+
+      expect(mockTree.request).toHaveBeenCalledWith(
+        { type: PacketType.Flush },
+        expect.objectContaining({
+          fileId: directory._id,
+        })
+      );
+    });
+  });
+
+  describe("read", () => {
+    beforeEach(async () => {
+      await directory.open("/test");
+    });
+
+    it("should read directory entries", async () => {
+      (mockTree.request as jest.Mock).mockResolvedValue({
+        header: { status: 0 },
+        body: {},
+        data: [
+          { filename: "file1.txt" },
+          { filename: "." },
+          { filename: ".." },
+          { filename: "file2.txt" },
+        ],
+      });
+
+      const entries = await directory.read();
+
+      expect(entries.length).toBe(2);
+      expect(entries[0].filename).toBe("file1.txt");
+      expect(entries[1].filename).toBe("file2.txt");
+    });
+
+    it("should handle response without data", async () => {
+      const consoleWarnSpy = jest.spyOn(console, "warn").mockImplementation();
+      (mockTree.request as jest.Mock).mockResolvedValue({
+        header: { status: 0 },
+        body: {},
+        // no data field
+      });
+
+      const entries = await directory.read();
+
+      expect(entries).toEqual([]);
+      expect(consoleWarnSpy).toHaveBeenCalled();
+
+      consoleWarnSpy.mockRestore();
+    });
+  });
+
+  describe("exists", () => {
+    it("should return true if directory exists", async () => {
+      (mockTree.request as jest.Mock).mockResolvedValue({
+        header: { status: 0 },
+        body: { fileId: Buffer.from("dir-id") },
+      });
+
+      const exists = await directory.exists("/test");
+
+      expect(exists).toBe(true);
+    });
+
+    it("should return false if directory not found", async () => {
+      (mockTree.request as jest.Mock).mockRejectedValue({
+        header: { status: 0xc0000034 }, // FileNameNotFound
+      });
+
+      const exists = await directory.exists("/nonexistent");
+
+      expect(exists).toBe(false);
+    });
+
+    it("should return false if path not found", async () => {
+      (mockTree.request as jest.Mock).mockRejectedValue({
+        header: { status: 0xc000003a }, // FilePathNotFound
+      });
+
+      const exists = await directory.exists("/bad/path");
+
+      expect(exists).toBe(false);
+    });
+
+    it("should throw other errors", async () => {
+      const testError = { header: { status: 0xc0000001 } };
+      (mockTree.request as jest.Mock).mockRejectedValue(testError);
+
+      await expect(directory.exists("/test")).rejects.toEqual(testError);
+    });
+  });
+
+  describe("remove", () => {
+    beforeEach(async () => {
+      await directory.open("/test");
+    });
+
+    it("should remove directory", async () => {
+      await directory.remove();
+
+      expect(mockTree.request).toHaveBeenCalledWith(
+        { type: PacketType.SetInfo },
+        expect.objectContaining({
+          fileId: directory._id,
+          buffer: expect.any(Buffer),
+        })
+      );
+    });
+  });
+
+  describe("rename", () => {
+    beforeEach(async () => {
+      await directory.open("/test");
+    });
+
+    it("should rename directory", async () => {
+      await directory.rename("/newname");
+
+      expect(mockTree.request).toHaveBeenCalledWith(
+        { type: PacketType.SetInfo },
+        expect.objectContaining({
+          fileId: directory._id,
+          buffer: expect.any(Buffer),
+        })
+      );
+    });
+  });
 });

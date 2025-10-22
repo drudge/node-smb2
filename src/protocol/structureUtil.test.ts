@@ -4,8 +4,13 @@ import {
   parseEnumValues,
   parseDate,
   parseString,
+  parseStructure,
+  parseValue,
+  parseList,
+  serializeStructure,
 } from "./structureUtil";
 import StructureField from "./StructureField";
+import Structure from "./Structure";
 
 describe("Structure Utilities", () => {
   describe("parseNumber", () => {
@@ -174,6 +179,263 @@ describe("Structure Utilities", () => {
     it("should handle flags not in enum", () => {
       const result = parseEnumValues(FlagEnum, 16); // Not in enum
       expect(result.length).toBe(0);
+    });
+  });
+
+  describe("parseStructure", () => {
+    it("should parse a simple structure", () => {
+      const structure: Structure = {
+        id: { type: Number, size: 4, signedness: "Unsigned" },
+        name: { type: String, size: 4, encoding: "hex" },
+      };
+
+      const buffer = Buffer.alloc(8);
+      buffer.writeUInt32LE(123, 0);
+      buffer.write("test", 4, "hex");
+
+      const result = parseStructure(buffer, structure);
+
+      expect(result.id).toBe(123);
+      expect(result.name).toBeDefined();
+    });
+
+    it("should handle sizeFieldName for dynamic sizes", () => {
+      const structure: Structure = {
+        dataLength: { type: Number, size: 4, signedness: "Unsigned" },
+        data: { type: Buffer, sizeFieldName: "dataLength" },
+      };
+
+      const buffer = Buffer.alloc(8);
+      buffer.writeUInt32LE(4, 0); // data length = 4
+      buffer.writeUInt32LE(0xdeadbeef, 4); // data
+
+      const result = parseStructure(buffer, structure);
+
+      expect(result.dataLength).toBe(4);
+      expect(result.data).toBeDefined();
+      expect(Buffer.isBuffer(result.data)).toBe(true);
+    });
+
+    it("should throw error for invalid sizeFieldName", () => {
+      const structure: Structure = {
+        data: { type: Buffer, sizeFieldName: "nonExistentField" },
+      };
+
+      const buffer = Buffer.alloc(4);
+
+      expect(() => parseStructure(buffer, structure)).toThrow(
+        "invalid_size_field_name"
+      );
+    });
+
+    it("should throw error when size is not specified", () => {
+      const structure: Structure = {
+        data: { type: Buffer } as any, // No size or sizeFieldName
+      };
+
+      const buffer = Buffer.alloc(4);
+
+      expect(() => parseStructure(buffer, structure)).toThrow("unknown_field_size");
+    });
+
+    it("should handle countFieldName for arrays", () => {
+      const structure: Structure = {
+        itemCount: { type: Number, size: 4, signedness: "Unsigned" },
+        items: { type: Number, size: 2, signedness: "Unsigned", countFieldName: "itemCount" },
+      };
+
+      const buffer = Buffer.alloc(10);
+      buffer.writeUInt32LE(3, 0); // 3 items
+      buffer.writeUInt16LE(10, 4);
+      buffer.writeUInt16LE(20, 6);
+      buffer.writeUInt16LE(30, 8);
+
+      const result = parseStructure(buffer, structure);
+
+      expect(result.itemCount).toBe(3);
+      expect(Array.isArray(result.items)).toBe(true);
+      expect(result.items.length).toBe(3);
+    });
+
+    it("should throw error for invalid countFieldName", () => {
+      const structure: Structure = {
+        items: { type: Number, size: 2, countFieldName: "nonExistentCount" },
+      };
+
+      const buffer = Buffer.alloc(4);
+
+      expect(() => parseStructure(buffer, structure)).toThrow(
+        "invalid_count_field_name"
+      );
+    });
+  });
+
+  describe("parseValue", () => {
+    it("should parse array values when count > 1", () => {
+      const field: StructureField = {
+        type: Number,
+        size: 2,
+        signedness: "Unsigned",
+        count: 3,
+      };
+
+      const buffer = Buffer.alloc(6);
+      buffer.writeUInt16LE(10, 0);
+      buffer.writeUInt16LE(20, 2);
+      buffer.writeUInt16LE(30, 4);
+
+      const result = parseValue(buffer, field);
+
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toEqual([10, 20, 30]);
+    });
+
+    it("should parse Buffer type", () => {
+      const field: StructureField = {
+        type: Buffer,
+        size: 4,
+      };
+
+      const buffer = Buffer.from([1, 2, 3, 4]);
+
+      const result = parseValue(buffer, field);
+
+      expect(Buffer.isBuffer(result)).toBe(true);
+      expect(result).toEqual(buffer);
+    });
+
+    it("should parse String type", () => {
+      const field: StructureField = {
+        type: String,
+        size: 4,
+        encoding: "hex",
+      };
+
+      const buffer = Buffer.from("test", "hex");
+
+      const result = parseValue(buffer, field);
+
+      expect(typeof result).toBe("string");
+    });
+
+    it("should parse Number type", () => {
+      const field: StructureField = {
+        type: Number,
+        size: 4,
+        signedness: "Unsigned",
+      };
+
+      const buffer = Buffer.alloc(4);
+      buffer.writeUInt32LE(42, 0);
+
+      const result = parseValue(buffer, field);
+
+      expect(result).toBe(42);
+    });
+  });
+
+  describe("parseList", () => {
+    it("should parse empty list", () => {
+      const buffer = Buffer.alloc(0);
+      const parser = (buf: Buffer) => buf.readUInt32LE(0);
+
+      const result = parseList(buffer, parser);
+
+      expect(result).toEqual([]);
+    });
+
+    it("should parse single entry list", () => {
+      const buffer = Buffer.alloc(8);
+      buffer.writeUInt32LE(0, 0); // nextEntryOffset = 0 (last entry)
+      buffer.writeUInt32LE(42, 4); // entry data
+
+      const parser = (buf: Buffer) => buf.readUInt32LE(0);
+
+      const result = parseList(buffer, parser);
+
+      expect(result.length).toBe(1);
+      expect(result[0]).toBe(42);
+    });
+
+    it("should parse multiple entry list", () => {
+      const buffer = Buffer.alloc(24);
+
+      // Entry 1: offset 0
+      buffer.writeUInt32LE(12, 0); // next entry at offset 12
+      buffer.writeUInt32LE(10, 4); // data
+
+      // Entry 2: offset 12
+      buffer.writeUInt32LE(12, 12); // next entry at offset 24 (12+12)
+      buffer.writeUInt32LE(20, 16); // data
+
+      // Entry 3: offset 24 would be here but we stop before
+      // Actually the list should stop when nextOffset is 0
+      // Let me fix this
+      buffer.writeUInt32LE(0, 12); // next entry offset = 0 (last)
+      buffer.writeUInt32LE(20, 16); // data
+
+      const parser = (buf: Buffer) => buf.readUInt32LE(0);
+
+      const result = parseList(buffer, parser);
+
+      expect(result.length).toBe(2);
+      expect(result[0]).toBe(10);
+      expect(result[1]).toBe(20);
+    });
+  });
+
+  describe("serializeStructure", () => {
+    it("should serialize simple structure", () => {
+      const structure: Structure = {
+        id: { type: Number, size: 4, signedness: "Unsigned" },
+      };
+
+      const data = { id: 123 };
+
+      const result = serializeStructure(structure, data);
+
+      expect(Buffer.isBuffer(result)).toBe(true);
+      expect(result.length).toBe(4);
+      expect(result.readUInt32LE(0)).toBe(123);
+    });
+
+    it("should use default values when data field is missing", () => {
+      const structure: Structure = {
+        id: { type: Number, size: 4, signedness: "Unsigned", defaultValue: 99 },
+      };
+
+      const data = {}; // No id provided
+
+      const result = serializeStructure(structure, data);
+
+      expect(result.readUInt32LE(0)).toBe(99);
+    });
+
+    it("should handle sizeFieldName for buffers", () => {
+      const structure: Structure = {
+        dataLength: { type: Number, size: 4, signedness: "Unsigned" },
+        data: { type: Buffer, sizeFieldName: "dataLength" },
+      };
+
+      const testBuffer = Buffer.from([1, 2, 3, 4]);
+      const data = { data: testBuffer };
+
+      const result = serializeStructure(structure, data);
+
+      expect(result.readUInt32LE(0)).toBe(4); // dataLength should be 4
+    });
+
+    it("should handle countFieldName for arrays", () => {
+      const structure: Structure = {
+        itemCount: { type: Number, size: 4, signedness: "Unsigned" },
+        items: { type: Number, size: 2, signedness: "Unsigned", countFieldName: "itemCount" },
+      };
+
+      const data = { items: [10, 20, 30] };
+
+      const result = serializeStructure(structure, data);
+
+      expect(result.readUInt32LE(0)).toBe(3); // itemCount should be 3
     });
   });
 });

@@ -322,4 +322,200 @@ describe("Client", () => {
       expect(client.listenerCount("error")).toBe(1);
     });
   });
+
+  describe("echo", () => {
+    it("should send echo request", async () => {
+      const mockRequest = jest.spyOn(client, "request").mockResolvedValue({
+        header: { status: StatusCode.Success },
+        body: {},
+      } as any);
+
+      await client.echo();
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        type: PacketType.Echo,
+      });
+    });
+  });
+
+  describe("authenticate", () => {
+    it("should create and authenticate session", async () => {
+      // Mock the connect method
+      jest.spyOn(client, "connect").mockResolvedValue();
+
+      // Create a proper NTLM Type 2 challenge message buffer
+      const challengeBuffer = Buffer.alloc(56);
+      challengeBuffer.write("NTLMSSP\x00", 0);
+      challengeBuffer.writeUInt32LE(2, 8);
+      challengeBuffer.writeUInt32LE(0, 12);
+      challengeBuffer.writeUInt32LE(0, 16);
+      challengeBuffer.writeUInt32LE(48, 20);
+      challengeBuffer.writeUInt32LE(0, 24);
+      challengeBuffer.write("\x01\x02\x03\x04\x05\x06\x07\x08", 24);
+
+      // Mock the request method to return proper responses
+      jest.spyOn(client, "request")
+        .mockResolvedValueOnce({
+          header: { status: StatusCode.Success },
+          body: {},
+        } as any)
+        .mockResolvedValueOnce({
+          header: { sessionId: "session-id", status: 0xc0000016 },
+          body: { buffer: challengeBuffer },
+        } as any)
+        .mockResolvedValue({
+          header: { status: StatusCode.Success },
+          body: {},
+        } as any);
+
+      const session = await client.authenticate({
+        domain: "DOMAIN",
+        username: "user",
+        password: "pass",
+      });
+
+      expect(session).toBeDefined();
+      expect(session.authenticated).toBe(true);
+    });
+
+    it("should connect if not already connected", async () => {
+      const connectSpy = jest.spyOn(client, "connect").mockResolvedValue();
+
+      const challengeBuffer = Buffer.alloc(56);
+      challengeBuffer.write("NTLMSSP\x00", 0);
+      challengeBuffer.writeUInt32LE(2, 8);
+      challengeBuffer.write("\x01\x02\x03\x04\x05\x06\x07\x08", 24);
+
+      jest.spyOn(client, "request")
+        .mockResolvedValueOnce({ header: { status: 0 }, body: {} } as any)
+        .mockResolvedValueOnce({
+          header: { sessionId: "s", status: 0xc0000016 },
+          body: { buffer: challengeBuffer },
+        } as any)
+        .mockResolvedValue({ header: { status: 0 }, body: {} } as any);
+
+      await client.authenticate({
+        domain: "D",
+        username: "u",
+        password: "p",
+      });
+
+      expect(connectSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe("send with status handling", () => {
+    beforeEach(() => {
+      client.connected = true;
+      client.socket = {
+        write: jest.fn((data, callback) => {
+          if (callback) callback();
+          return true;
+        }),
+      } as any;
+    });
+
+    it("should resolve on Success status", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      const sendPromise = client.send(req);
+
+      // Simulate response
+      client.onResponse({
+        header: {
+          messageId: req.header.messageId,
+          status: StatusCode.Success,
+        },
+        body: {},
+      } as any);
+
+      await expect(sendPromise).resolves.toBeDefined();
+    });
+
+    it("should resolve on Pending status", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      const sendPromise = client.send(req);
+
+      client.onResponse({
+        header: {
+          messageId: req.header.messageId,
+          status: StatusCode.Pending,
+        },
+        body: {},
+      } as any);
+
+      await expect(sendPromise).resolves.toBeDefined();
+    });
+
+    it("should resolve on MoreProcessingRequired status", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      const sendPromise = client.send(req);
+
+      client.onResponse({
+        header: {
+          messageId: req.header.messageId,
+          status: StatusCode.MoreProcessingRequired,
+        },
+        body: {},
+      } as any);
+
+      await expect(sendPromise).resolves.toBeDefined();
+    });
+
+    it("should reject on error status", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      const sendPromise = client.send(req);
+
+      client.onResponse({
+        header: {
+          messageId: req.header.messageId,
+          status: 0xc0000001, // Some error
+        },
+        body: {},
+      } as any);
+
+      await expect(sendPromise).rejects.toBeDefined();
+    });
+
+    it("should cleanup timeout on response", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      const sendPromise = client.send(req);
+
+      expect(client.requestTimeoutIdMap.has(req.header.messageId)).toBe(true);
+
+      client.onResponse({
+        header: {
+          messageId: req.header.messageId,
+          status: StatusCode.Success,
+        },
+        body: {},
+      } as any);
+
+      await sendPromise;
+
+      expect(client.requestTimeoutIdMap.has(req.header.messageId)).toBe(false);
+    });
+
+    it("should handle response arriving before send completes", async () => {
+      const req = client.createRequest({ type: PacketType.Echo });
+
+      // Store response first
+      client.responseMap.set(req.header.messageId, {
+        header: {
+          messageId: req.header.messageId,
+          status: StatusCode.Success,
+        },
+        body: {},
+      } as any);
+
+      const response = await client.send(req);
+
+      expect(response).toBeDefined();
+      expect(client.responseMap.has(req.header.messageId)).toBe(false);
+    });
+  });
 });
