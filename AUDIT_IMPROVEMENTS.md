@@ -91,7 +91,7 @@ This document outlines the improvements made to the node-smb2 package based on a
 
 ## Test Suite Details
 
-### Test Coverage: 66.06% (278 passing tests) ✅
+### Test Coverage: 71.72% (360 passing tests) ✅
 
 **Test Files:**
 - `src/protocol/util.test.ts` - Path conversion, GUID generation (18 tests)
@@ -104,20 +104,23 @@ This document outlines the improvements made to the node-smb2 package based on a
 - `src/client/Session.test.ts` - Session management and authentication (26 tests)
 - `src/client/Tree.test.ts` - Tree operations and file/directory management (37 tests)
 - `src/client/File.test.ts` - File operations and lifecycle (39 tests)
-- `src/client/Directory.test.ts` - Directory operations and lifecycle (39 tests)
+- `src/client/Directory.test.ts` - Directory operations and lifecycle (50 tests)
+- `src/client/stream/FileWriteStream.test.ts` - File write streaming (11 tests)
 - `src/__tests__/example.test.ts` - Integration examples (9 tests)
 
 **Coverage by Module:**
-- **Protocol utilities**: 100% (fully tested)
-- **Packet parsing**: 100% (fully tested)
-- **Session.ts**: 100% (fully tested - authentication, trees, logoff)
-- **Tree.ts**: 95.53% (comprehensive file/directory operations)
-- **Directory.ts**: 76.82% (open, read, watch, create operations)
-- **Client.ts**: 58% (core methods tested)
-- **File.ts**: 28% (open, create, state tracking tested)
-- **SMB2 Request/Response**: 73-77% (good coverage)
-- **SMB2 Packets**: 69% (structure definitions tested)
-- **Client module overall**: 81.94% ✅
+- **Protocol module**: 97.70% ✅ (nearly complete)
+  - structureUtil.ts: 96.45% (comprehensive parsing/serialization)
+  - Protocol utilities: 100%
+  - Packet parsing: 100%
+- **Client module**: 88.26% ✅
+  - Session.ts: 100% (authentication, trees, logoff)
+  - FileWriteStream.ts: 100% (write streaming)
+  - Tree.ts: 95.53% (file/directory operations)
+  - File.ts: 93.25% (file operations)
+  - Directory.ts: 86.58% (directory operations)
+  - Client.ts: 74.78% (connection, requests, data handling)
+- **SMB2 Packets**: 69.46% (structure definitions)
 
 ## Available Commands
 
@@ -186,7 +189,7 @@ None - all changes are backward compatible.
 - **Dependencies**: Latest versions (TypeScript 5.9.3, nodemon 3.1.10)
 - **Security**: 0 vulnerabilities ✅
 - **Linting**: Modern ESLint with TypeScript support
-- **Tests**: 278 tests, 66.06% coverage ✅
+- **Tests**: 360 tests, 71.72% coverage ✅
 - **CI/CD**: GitHub Actions with multi-version Node testing
 - **Code formatting**: Prettier configured and integrated
 
