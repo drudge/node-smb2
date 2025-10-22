@@ -91,7 +91,7 @@ This document outlines the improvements made to the node-smb2 package based on a
 
 ## Test Suite Details
 
-### Test Coverage: 37.61% (131 passing tests)
+### Test Coverage: 38.99% (215 passing tests)
 
 **Test Files:**
 - `src/protocol/util.test.ts` - Path conversion, GUID generation (18 tests)
@@ -99,18 +99,24 @@ This document outlines the improvements made to the node-smb2 package based on a
 - `src/protocol/structureUtil.test.ts` - Binary structure parsing (25 tests)
 - `src/protocol/smb2/Request.test.ts` - SMB2 request creation (13 tests)
 - `src/protocol/smb2/Response.test.ts` - SMB2 response parsing (15 tests)
+- `src/protocol/smb2/packets/packets.test.ts` - SMB2 packet structures (44 tests)
 - `src/client/Client.test.ts` - Client connection and lifecycle (21 tests)
 - `src/client/Session.test.ts` - Session management (9 tests)
 - `src/client/Tree.test.ts` - Tree connection handling (9 tests)
+- `src/client/File.test.ts` - File operations and lifecycle (39 tests)
+- `src/client/Directory.test.ts` - Directory operations and lifecycle (39 tests)
 - `src/__tests__/example.test.ts` - Integration examples (9 tests)
 
 **Coverage by Module:**
 - **Protocol utilities**: 100% (fully tested)
 - **Packet parsing**: 100% (fully tested)
 - **Client.ts**: 58% (core methods tested)
+- **File.ts**: 28% (open, create, state tracking tested)
+- **Directory.ts**: 32% (open, create, state tracking tested)
 - **Session.ts**: 27% (basic functionality tested)
-- **Tree.ts**: 27% (basic functionality tested)
-- **SMB2 Request/Response**: 63-64% (good coverage)
+- **Tree.ts**: 13% (basic functionality tested)
+- **SMB2 Request/Response**: 73-77% (good coverage)
+- **SMB2 Packets**: 69% (structure definitions tested)
 
 ## Available Commands
 
@@ -140,8 +146,9 @@ npm run format:check   # Check code formatting
 ## Future Improvements Recommended
 
 ### High Priority
-1. **Increase Test Coverage**: Currently 37.61% - aim for >60%
-   - Add tests for Directory and File classes (currently ~17% coverage)
+1. **Increase Test Coverage**: Currently 38.99% - aim for >60%
+   - Add tests for File operation methods (read, write, delete)
+   - Add tests for Directory methods (list, watch)
    - Add tests for authentication flows
    - Add integration tests with mock SMB server
 2. **Enable Strict TypeScript Mode**: Gradually enable strict checks
@@ -178,7 +185,7 @@ None - all changes are backward compatible.
 - **Dependencies**: Latest versions (TypeScript 5.9.3, nodemon 3.1.10)
 - **Security**: 0 vulnerabilities ✅
 - **Linting**: Modern ESLint with TypeScript support
-- **Tests**: 131 tests, 37.61% coverage
+- **Tests**: 215 tests, 38.99% coverage
 - **CI/CD**: GitHub Actions with multi-version Node testing
 - **Code formatting**: Prettier configured and integrated
 
