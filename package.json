@@ -33,8 +33,7 @@
   "dependencies": {
     "des.js": "^1.1.0",
     "js-md4": "^0.3.2",
-    "moment-timezone": "^0.5.31",
-    "node-aes-cmac": "^0.1.1"
+    "moment-timezone": "^0.5.31"
   },
   "devDependencies": {
     "@types/node": "^18.19.103",

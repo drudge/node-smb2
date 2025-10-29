@@ -1,5 +1,82 @@
 import crypto from "crypto";
-import aesCmac from "node-aes-cmac";
+
+/**
+ * AES-CMAC implementation per RFC 4493
+ *
+ * @param key - 16-byte key
+ * @param data - Data to authenticate
+ * @returns 16-byte MAC
+ */
+function aesCmac(key: Buffer, data: Buffer): Buffer {
+  const blockSize = 16;
+
+  // Generate subkeys K1 and K2
+  const L = Buffer.alloc(blockSize);
+  const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
+  cipher.setAutoPadding(false);
+  cipher.update(L).copy(L);
+  cipher.final();
+
+  const K1 = leftShift(L);
+  const K2 = leftShift(K1);
+
+  // Determine if padding is needed
+  const n = data.length === 0 ? 1 : Math.ceil(data.length / blockSize);
+  const lastBlockComplete = (data.length !== 0) && (data.length % blockSize === 0);
+
+  let M_last: Buffer;
+  if (lastBlockComplete) {
+    M_last = xor(data.slice((n - 1) * blockSize), K1);
+  } else {
+    const padding = Buffer.alloc(blockSize);
+    const remainder = data.slice((n - 1) * blockSize);
+    remainder.copy(padding);
+    padding[remainder.length] = 0x80;
+    M_last = xor(padding, K2);
+  }
+
+  // Process blocks
+  const X = Buffer.alloc(blockSize);
+  const blockCipher = crypto.createCipheriv('aes-128-ecb', key, null);
+  blockCipher.setAutoPadding(false);
+
+  for (let i = 0; i < n - 1; i++) {
+    const block = data.slice(i * blockSize, (i + 1) * blockSize);
+    xor(X, block).copy(X);
+    blockCipher.update(X).copy(X);
+  }
+
+  xor(X, M_last).copy(X);
+  blockCipher.update(X).copy(X);
+  blockCipher.final();
+
+  return X;
+}
+
+function leftShift(buffer: Buffer): Buffer {
+  const shifted = Buffer.alloc(buffer.length);
+  let overflow = 0;
+
+  for (let i = buffer.length - 1; i >= 0; i--) {
+    shifted[i] = (buffer[i] << 1) | overflow;
+    overflow = (buffer[i] & 0x80) ? 1 : 0;
+  }
+
+  // Apply Rb constant if MSB was 1
+  if (buffer[0] & 0x80) {
+    shifted[shifted.length - 1] ^= 0x87;
+  }
+
+  return shifted;
+}
+
+function xor(a: Buffer, b: Buffer): Buffer {
+  const result = Buffer.alloc(Math.max(a.length, b.length));
+  for (let i = 0; i < result.length; i++) {
+    result[i] = (a[i] || 0) ^ (b[i] || 0);
+  }
+  return result;
+}
 
 /**
  * SMB3KDF - Key Derivation Function for SMB 3.x
@@ -66,9 +143,8 @@ export function deriveSessionKey(ntlmv2Hash: Buffer, ntProofStr: Buffer): Buffer
  * @returns Signature (16 bytes)
  */
 export function calculateSignature(signingKey: Buffer, data: Buffer): Buffer {
-  // AES-128-CMAC per MS-SMB2 spec
-  const signature = aesCmac(signingKey, data);
-  return Buffer.from(signature, 'hex');
+  // AES-128-CMAC per MS-SMB2 spec (RFC 4493)
+  return aesCmac(signingKey, data);
 }
 
 /**
