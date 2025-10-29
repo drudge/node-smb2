@@ -97,6 +97,11 @@ class Session extends EventEmitter {
       const serverCapabilities = negotiateResponse.body.capabilities || 0;
       const serverSupportsEncryption = (serverCapabilities & 0x00000040) !== 0; // Encryption capability
 
+      console.log(`[DEBUG] Negotiate response:`);
+      console.log(`  Dialect: 0x${this.dialectRevision.toString(16)}`);
+      console.log(`  Server capabilities: 0x${serverCapabilities.toString(16)}`);
+      console.log(`  Encryption capability bit: ${serverSupportsEncryption}`);
+
       // Enable encryption if we negotiated SMB 3.x and server supports it
       const isSmb3 = this.dialectRevision >= 0x0300; // SMB 3.0 or higher
       if (isSmb3 && serverSupportsEncryption) {

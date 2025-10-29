@@ -36,8 +36,41 @@ class Tree extends EventEmitter {
       util.toWindowsPath(`//${this.session.client.host}:${this.session.client.port}/${path}`),
       "ucs2"
     );
-    const response = await this.request({ type: PacketType.TreeConnect }, { buffer });
+
+    let response;
+    try {
+      response = await this.request({ type: PacketType.TreeConnect }, { buffer });
+    } catch (error) {
+      // If TreeConnect fails with ACCESS_DENIED (0xc0000022) and we have encryption keys,
+      // enable encryption and retry
+      if (error.header && error.header.status === 0xc0000022 &&
+          this.session.encryptionKey && this.session.decryptionKey &&
+          !this.session.encryptionEnabled) {
+        console.log(`[INFO] TreeConnect denied without encryption, retrying with encryption enabled...`);
+        this.session.encryptionEnabled = true;
+        response = await this.request({ type: PacketType.TreeConnect }, { buffer });
+      } else {
+        throw error;
+      }
+    }
+
     this._id = response.header.treeId;
+
+    // Check if share requires encryption (SMB2_SHAREFLAG_ENCRYPT_DATA = 0x00000008)
+    const shareFlags = response.body.shareFlags || 0;
+    const shareRequiresEncryption = (shareFlags & 0x00000008) !== 0;
+
+    console.log(`[DEBUG] Tree connect response for ${path}:`);
+    console.log(`  Share flags: 0x${shareFlags.toString(16)}`);
+    console.log(`  Encryption required: ${shareRequiresEncryption}`);
+
+    // Ensure encryption stays enabled if share requires it
+    if (shareRequiresEncryption && this.session.encryptionKey && this.session.decryptionKey) {
+      if (!this.session.encryptionEnabled) {
+        console.log(`Enabling SMB3 encryption for share: ${path}`);
+        this.session.encryptionEnabled = true;
+      }
+    }
 
     this.connecting = false;
     this.connected = true;
