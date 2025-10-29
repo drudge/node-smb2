@@ -252,7 +252,8 @@ export const encodeAuthenticationMessage = (
   serverTargetInfo?: Buffer  // Server's TargetInfo from Type-2 challenge
 ): AuthenticationResult => {
   const hostname = h.toUpperCase();
-  const domain = d.toUpperCase();
+  // Per MS-NLMP spec: domain should be case-preserved in auth message (not uppercased)
+  const domain = d;
   const ntHash = createNtHash(password);
   let ntResponse: Buffer;
   let lmResponse: Buffer;

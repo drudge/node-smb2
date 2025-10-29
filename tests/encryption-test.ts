@@ -136,9 +136,14 @@ async function testDomainAuthentication(config: TestConfig): Promise<boolean> {
     await client.close();
     return true;
   } catch (err) {
-    error(`Authentication failed: ${err.message}`);
+    const msg = err.message || (err.header ? `SMB error status 0x${err.header.status.toString(16)}` : 'Unknown error');
+    error(`Authentication failed: ${msg}`);
     if (err.header) {
       error(`Status code: 0x${err.header.status.toString(16)}`);
+      // 0xc000006d = STATUS_LOGON_FAILURE
+      if (err.header.status === 0xc000006d) {
+        error('STATUS_LOGON_FAILURE: Invalid username, domain, or password');
+      }
     }
     return false;
   }
