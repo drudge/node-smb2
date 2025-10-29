@@ -61,9 +61,9 @@ async function quickTest() {
     console.log(`✅ Found ${files.length} items:\n`);
 
     files.slice(0, 10).forEach((file, i) => {
-      const icon = file.Filename.includes('.') ? '📄' : '📁';
-      const size = file.EndOfFile ? `(${(file.EndOfFile / 1024).toFixed(1)} KB)` : '';
-      console.log(`   ${i + 1}. ${icon} ${file.Filename} ${size}`);
+      const icon = file.filename.includes('.') ? '📄' : '📁';
+      const size = file.fileSize ? `(${(Number(file.fileSize) / 1024).toFixed(1)} KB)` : '';
+      console.log(`   ${i + 1}. ${icon} ${file.filename} ${size}`);
     });
 
     if (files.length > 10) {

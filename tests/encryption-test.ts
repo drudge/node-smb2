@@ -202,7 +202,7 @@ async function testEncryptedShare(config: TestConfig): Promise<boolean> {
 
     if (files.length > 0) {
       files.slice(0, 5).forEach(file => {
-        info(`  - ${file.Filename} (${file.EndOfFile} bytes)`);
+        info(`  - ${file.filename} (${file.fileSize} bytes)`);
       });
     }
 
