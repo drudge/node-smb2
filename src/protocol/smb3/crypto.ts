@@ -93,8 +93,9 @@ export function smb3KDF(ki: Buffer, label: string, context: string, l: number = 
   // KDF in Counter Mode: PRF (Ki, [i]2 || Label || 0x00 || Context || [L]2)
   // where PRF is HMAC-SHA256
 
-  const labelBuf = Buffer.from(label, 'ascii');
-  const contextBuf = Buffer.from(context, 'ascii');
+  // Label and Context already include null terminators as actual bytes
+  const labelBuf = Buffer.from(label, 'binary');
+  const contextBuf = Buffer.from(context, 'binary');
 
   // Counter (i) - 4 bytes, big-endian, starts at 1
   const counter = Buffer.alloc(4);
@@ -155,7 +156,10 @@ export function calculateSignature(signingKey: Buffer, data: Buffer): Buffer {
  * @returns Signing key (16 bytes)
  */
 export function deriveSigningKey(sessionKey: Buffer, direction: 'ServerIn' | 'ServerOut'): Buffer {
-  return smb3KDF(sessionKey, 'SMB2AESCMAC\0', direction + '\0', 128);
+  // Per MS-SMB2: Label = "SMB2AESCMAC" + 0x00, Context = "ServerIn " or "ServerOut " (with space) + 0x00
+  const label = 'SMB2AESCMAC' + String.fromCharCode(0);
+  const context = direction + ' ' + String.fromCharCode(0); // Note the space before null!
+  return smb3KDF(sessionKey, label, context, 128);
 }
 
 /**
@@ -166,7 +170,10 @@ export function deriveSigningKey(sessionKey: Buffer, direction: 'ServerIn' | 'Se
  * @returns Encryption key (16 bytes)
  */
 export function deriveEncryptionKey(sessionKey: Buffer, direction: 'ServerIn' | 'ServerOut'): Buffer {
-  return smb3KDF(sessionKey, 'SMB2AESCCM\0', direction + '\0', 128);
+  // Per MS-SMB2: Label = "SMB2AESCCM" + 0x00, Context = "ServerIn " or "ServerOut " (with space) + 0x00
+  const label = 'SMB2AESCCM' + String.fromCharCode(0);
+  const context = direction + ' ' + String.fromCharCode(0); // Note the space before null!
+  return smb3KDF(sessionKey, label, context, 128);
 }
 
 /**
