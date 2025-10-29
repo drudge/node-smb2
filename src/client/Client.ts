@@ -173,17 +173,34 @@ class Client extends EventEmitter {
       throw new Error("Encryption keys not available");
     }
 
+    console.log('\n=== ENCRYPTION DEBUG ===');
+    console.log('Original message length:', message.length);
+    console.log('Original message (first 64 bytes):', message.slice(0, 64).toString('hex'));
+    console.log('Session ID:', session._id);
+
     // Create Transform header
     const transformHeader = TransformHeaderUtil.create(session._id, message.length);
 
     // Serialize Transform header
     const transformHeaderBuffer = TransformHeaderUtil.serialize(transformHeader);
 
+    console.log('\nTransform Header (52 bytes):');
+    console.log('  Bytes 0-3 (ProtocolId):', transformHeaderBuffer.slice(0, 4).toString('hex'));
+    console.log('  Bytes 4-19 (Signature):', transformHeaderBuffer.slice(4, 20).toString('hex'));
+    console.log('  Bytes 20-35 (Nonce):', transformHeaderBuffer.slice(20, 36).toString('hex'));
+    console.log('  Bytes 36-39 (OriginalMessageSize):', transformHeaderBuffer.readUInt32LE(36), '=', transformHeaderBuffer.slice(36, 40).toString('hex'));
+    console.log('  Bytes 40-41 (Reserved):', transformHeaderBuffer.slice(40, 42).toString('hex'));
+    console.log('  Bytes 42-43 (Flags):', transformHeaderBuffer.slice(42, 44).toString('hex'));
+    console.log('  Bytes 44-51 (SessionId):', transformHeaderBuffer.slice(44, 52).toString('hex'));
+
     // Get AAD (Additional Authenticated Data) - 32 bytes starting from Nonce field
     const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
+    console.log('\nAAD (32 bytes):', aad.toString('hex'));
 
     // Get CCM nonce (first 11 bytes of 16-byte nonce)
     const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
+    console.log('CCM Nonce (11 bytes):', nonce.toString('hex'));
+    console.log('Encryption key:', session.encryptionKey.toString('hex'));
 
     // Encrypt the SMB2 message
     const { ciphertext, authTag } = encryptAES128CCM(
@@ -193,12 +210,21 @@ class Client extends EventEmitter {
       aad
     );
 
+    console.log('\nEncryption result:');
+    console.log('  Ciphertext length:', ciphertext.length);
+    console.log('  Auth tag:', authTag.toString('hex'));
+
     // Per MS-SMB2 section 3.1.4.1: For AES-CCM, the Signature field
     // is set to the 16-byte authentication tag from CCM (not a separate CMAC!)
     authTag.copy(transformHeaderBuffer, 4); // Write auth tag as signature at offset 4
 
+    const finalPacket = Buffer.concat([transformHeaderBuffer, ciphertext]);
+    console.log('\nFinal packet length:', finalPacket.length);
+    console.log('Final packet (first 128 bytes):', finalPacket.slice(0, 128).toString('hex'));
+    console.log('=== END ENCRYPTION DEBUG ===\n');
+
     // Return Transform header + ciphertext (auth tag is in header, not appended to ciphertext)
-    return Buffer.concat([transformHeaderBuffer, ciphertext]);
+    return finalPacket;
   }
 
   async send(request: Request) {
@@ -211,9 +237,34 @@ class Client extends EventEmitter {
     const session = this.sessions.find(s => s._id === request.header.sessionId);
     if (session && session.encryptionEnabled && session.encryptionKey) {
       try {
-        // Wrap the serialized message in Transform header with encryption
-        const encryptedBuffer = this.encryptMessage(buffer, session);
-        this.socket.write(encryptedBuffer);
+        // Per MS-SMB2: request.serialize() returns NetBIOS header (4 bytes) + SMB2 message
+        // For encryption, we need: NetBIOS header + Transform header + Encrypted SMB2 message
+        // So strip the NetBIOS header, encrypt the SMB2 message, then add a new NetBIOS header
+
+        const smb2Message = Buffer.from(buffer.slice(4)); // Copy SMB2 message without NetBIOS header
+
+        // Per MS-SMB2 section 3.1.4.1: "the client MUST set SessionId in the Transform header
+        // to the Session.SessionId and MUST set SessionId in the SMB2 header to 0"
+        // SessionId is at offset 44-51 in SMB2 header (after 4-byte protocol ID, 4-byte header size,
+        // 2-byte credit charge, 2-byte channel sequence, 2-byte reserved, 2-byte command, etc.)
+        // SMB2 Header: ProtocolId (4) + StructureSize (2) + CreditCharge (2) + Status (4) +
+        //              Command (2) + CreditReq/Resp (2) + Flags (4) + NextCommand (4) + MessageId (8) +
+        //              Reserved/AsyncId (4) + TreeId (4) + SessionId (8)
+        // So SessionId is at offset 40 in the SMB2 message (44 in full buffer including NetBIOS)
+        smb2Message.fill(0, 40, 48); // Zero out SessionId (8 bytes starting at offset 40)
+
+        // Encrypt the SMB2 message (with zeroed SessionId)
+        const encryptedPacket = this.encryptMessage(smb2Message, session);
+
+        // Create new NetBIOS header for the complete encrypted packet
+        const totalLength = encryptedPacket.length;
+        const newNetbiosHeader = Buffer.allocUnsafe(4);
+        newNetbiosHeader.writeUInt8(0x00, 0);
+        newNetbiosHeader.writeUInt8((0xff0000 & totalLength) >> 16, 1);
+        newNetbiosHeader.writeUInt16BE(0xffff & totalLength, 2);
+
+        const finalBuffer = Buffer.concat([newNetbiosHeader, encryptedPacket]);
+        this.socket.write(finalBuffer);
         console.log("Message encrypted with Transform header");
       } catch (err) {
         console.error("Encryption failed:", err);
