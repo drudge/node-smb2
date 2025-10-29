@@ -147,13 +147,22 @@ class Client extends EventEmitter {
     const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
     const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
 
-    // Decrypt the message
+    // Per MS-SMB2 3.1.4.1: For AES-CCM, the signature field IS the auth tag
+    const authTag = transformHeader.signature;
+
+    console.log('[DECRYPT] Ciphertext size:', encryptedMessage.length);
+    console.log('[DECRYPT] Auth tag from header:', authTag.toString('hex'));
+
+    // Decrypt and verify the message
     const decryptedMessage = decryptAES128CCM(
       session.decryptionKey,
       nonce,
       encryptedMessage,
+      authTag,
       aad
     );
+
+    console.log('[DECRYPT] Decrypted message size:', decryptedMessage.length);
 
     return decryptedMessage;
   }
@@ -169,35 +178,42 @@ class Client extends EventEmitter {
       throw new Error("Encryption keys not available");
     }
 
+    console.log('[ENCRYPT] Message size:', message.length);
+    console.log('[ENCRYPT] Encryption key:', session.encryptionKey.toString('hex'));
+    console.log('[ENCRYPT] Signing key:', session.signingKey.toString('hex'));
+
     // Create Transform header
     const transformHeader = TransformHeaderUtil.create(session._id, message.length);
 
     // Serialize Transform header
     const transformHeaderBuffer = TransformHeaderUtil.serialize(transformHeader);
 
+    console.log('[ENCRYPT] Nonce:', transformHeader.nonce.toString('hex'));
+
     // Get AAD (Additional Authenticated Data) - 32 bytes starting from Nonce field
     const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
+    console.log('[ENCRYPT] AAD:', aad.toString('hex'));
 
     // Get CCM nonce (first 11 bytes of 16-byte nonce)
     const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
 
     // Encrypt the SMB2 message
-    const encryptedMessage = encryptAES128CCM(
+    const { ciphertext, authTag } = encryptAES128CCM(
       session.encryptionKey,
       nonce,
       message,
       aad
     );
 
-    // Calculate signature over Transform header (with zeros in signature field) + encrypted message
-    const dataToSign = Buffer.concat([transformHeaderBuffer, encryptedMessage]);
-    const signature = calculateSignature(session.signingKey, dataToSign);
+    console.log('[ENCRYPT] Ciphertext size:', ciphertext.length);
+    console.log('[ENCRYPT] Auth tag:', authTag.toString('hex'));
 
-    // Update signature in Transform header
-    signature.copy(transformHeaderBuffer, 4); // Signature starts at offset 4
+    // Per MS-SMB2 section 3.1.4.1: For AES-CCM, the Signature field
+    // is set to the 16-byte authentication tag from CCM (not a separate CMAC!)
+    authTag.copy(transformHeaderBuffer, 4); // Write auth tag as signature at offset 4
 
-    // Return Transform header + encrypted message
-    return Buffer.concat([transformHeaderBuffer, encryptedMessage]);
+    // Return Transform header + ciphertext (auth tag is in header, not appended to ciphertext)
+    return Buffer.concat([transformHeaderBuffer, ciphertext]);
   }
 
   async send(request: Request) {

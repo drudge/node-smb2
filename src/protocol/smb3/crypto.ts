@@ -203,7 +203,7 @@ export function encryptAES128CCM(
   nonce: Buffer,
   plaintext: Buffer,
   aad: Buffer
-): Buffer {
+): { ciphertext: Buffer; authTag: Buffer } {
   // AES-128-CCM with 16-byte authentication tag
   // Tag length = 16 bytes per MS-SMB2 spec
   const cipher = crypto.createCipheriv('aes-128-ccm', key, nonce, {
@@ -218,8 +218,12 @@ export function encryptAES128CCM(
   cipher.final(); // Finalize encryption
   const tag = cipher.getAuthTag();
 
-  // Return encrypted data + auth tag
-  return Buffer.concat([encrypted, tag]);
+  // Return ciphertext and auth tag separately
+  // Per MS-SMB2 3.1.4.1: For CCM, the signature field IS the auth tag
+  return {
+    ciphertext: encrypted,
+    authTag: tag
+  };
 }
 
 /**
@@ -235,22 +239,20 @@ export function decryptAES128CCM(
   key: Buffer,
   nonce: Buffer,
   ciphertext: Buffer,
+  authTag: Buffer,
   aad: Buffer
 ): Buffer {
-  // Split ciphertext and auth tag (last 16 bytes)
-  const encrypted = ciphertext.slice(0, -16);
-  const tag = ciphertext.slice(-16);
-
+  // Per MS-SMB2 3.1.4.1: For CCM, auth tag comes from Transform header signature field
   const decipher = crypto.createDecipheriv('aes-128-ccm', key, nonce, {
     authTagLength: 16
   });
 
-  decipher.setAuthTag(tag);
+  decipher.setAuthTag(authTag);
   decipher.setAAD(aad, {
-    plaintextLength: encrypted.length
+    plaintextLength: ciphertext.length
   });
 
-  const decrypted = decipher.update(encrypted);
+  const decrypted = decipher.update(ciphertext);
   decipher.final(); // Verify authentication tag
 
   return decrypted;
