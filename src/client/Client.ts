@@ -150,9 +150,6 @@ class Client extends EventEmitter {
     // Per MS-SMB2 3.1.4.1: For AES-CCM, the signature field IS the auth tag
     const authTag = transformHeader.signature;
 
-    console.log('[DECRYPT] Ciphertext size:', encryptedMessage.length);
-    console.log('[DECRYPT] Auth tag from header:', authTag.toString('hex'));
-
     // Decrypt and verify the message
     const decryptedMessage = decryptAES128CCM(
       session.decryptionKey,
@@ -161,8 +158,6 @@ class Client extends EventEmitter {
       authTag,
       aad
     );
-
-    console.log('[DECRYPT] Decrypted message size:', decryptedMessage.length);
 
     return decryptedMessage;
   }
@@ -178,21 +173,14 @@ class Client extends EventEmitter {
       throw new Error("Encryption keys not available");
     }
 
-    console.log('[ENCRYPT] Message size:', message.length);
-    console.log('[ENCRYPT] Encryption key:', session.encryptionKey.toString('hex'));
-    console.log('[ENCRYPT] Signing key:', session.signingKey.toString('hex'));
-
     // Create Transform header
     const transformHeader = TransformHeaderUtil.create(session._id, message.length);
 
     // Serialize Transform header
     const transformHeaderBuffer = TransformHeaderUtil.serialize(transformHeader);
 
-    console.log('[ENCRYPT] Nonce:', transformHeader.nonce.toString('hex'));
-
     // Get AAD (Additional Authenticated Data) - 32 bytes starting from Nonce field
     const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
-    console.log('[ENCRYPT] AAD:', aad.toString('hex'));
 
     // Get CCM nonce (first 11 bytes of 16-byte nonce)
     const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
@@ -204,9 +192,6 @@ class Client extends EventEmitter {
       message,
       aad
     );
-
-    console.log('[ENCRYPT] Ciphertext size:', ciphertext.length);
-    console.log('[ENCRYPT] Auth tag:', authTag.toString('hex'));
 
     // Per MS-SMB2 section 3.1.4.1: For AES-CCM, the Signature field
     // is set to the 16-byte authentication tag from CCM (not a separate CMAC!)
