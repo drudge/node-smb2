@@ -57,7 +57,7 @@ async function quickTest() {
     console.log(`✅ Connected! Tree ID: ${tree._id}\n`);
 
     console.log('📋 Listing files...');
-    const files = await tree.readdir('');
+    const files = await tree.readDirectory('');
     console.log(`✅ Found ${files.length} items:\n`);
 
     files.slice(0, 10).forEach((file, i) => {
@@ -73,7 +73,7 @@ async function quickTest() {
     console.log('\n🧪 Testing file write...');
     const testFileName = `test-${Date.now()}.txt`;
     const testContent = `Test from node-smb2 at ${new Date().toISOString()}`;
-    await tree.writeFile(testFileName, testContent);
+    await tree.createFile(testFileName, testContent);
     console.log(`✅ Wrote: ${testFileName}`);
 
     console.log('🧪 Testing file read...');
@@ -85,7 +85,7 @@ async function quickTest() {
     }
 
     console.log('🧪 Testing file delete...');
-    await tree.unlink(testFileName);
+    await tree.removeFile(testFileName);
     console.log('✅ Deleted!');
 
     await client.close();

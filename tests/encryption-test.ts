@@ -197,7 +197,7 @@ async function testEncryptedShare(config: TestConfig): Promise<boolean> {
 
     // List files
     info('Listing files in share...');
-    const files = await tree.readdir('');
+    const files = await tree.readDirectory('');
     success(`Found ${files.length} files/folders`);
 
     if (files.length > 0) {
@@ -238,7 +238,7 @@ async function testFileOperations(config: TestConfig): Promise<boolean> {
 
     // Upload
     info(`Uploading test file: ${testFile}`);
-    await tree.writeFile(testFile, testContent);
+    await tree.createFile(testFile, testContent);
     success('File uploaded successfully');
 
     // Download
@@ -257,7 +257,7 @@ async function testFileOperations(config: TestConfig): Promise<boolean> {
 
     // Delete
     info(`Deleting test file: ${testFile}`);
-    await tree.unlink(testFile);
+    await tree.removeFile(testFile);
     success('File deleted successfully');
 
     await client.close();
@@ -297,7 +297,7 @@ async function testLargeFileTransfer(config: TestConfig): Promise<boolean> {
     // Upload
     info(`Uploading large file: ${largeFileName} (${fileSize} bytes)...`);
     const uploadStart = Date.now();
-    await tree.writeFile(largeFileName, largeContent);
+    await tree.createFile(largeFileName, largeContent);
     const uploadTime = Date.now() - uploadStart;
     success(`Uploaded in ${uploadTime}ms (${(fileSize / uploadTime / 1024).toFixed(2)} MB/s)`);
 
@@ -318,7 +318,7 @@ async function testLargeFileTransfer(config: TestConfig): Promise<boolean> {
 
     // Cleanup
     info(`Deleting large file: ${largeFileName}`);
-    await tree.unlink(largeFileName);
+    await tree.removeFile(largeFileName);
     success('Large file deleted');
 
     await client.close();
