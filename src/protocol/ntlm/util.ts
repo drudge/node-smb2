@@ -217,7 +217,23 @@ export const decodeChallengeMessage = (buffer: Buffer) => {
 
   offset += 8; // Reserved
 
-  return serverChallenge;
+  // Extract TargetInfo if present (per MS-NLMP spec)
+  let targetInfo: Buffer | undefined;
+  if (buffer.length > 48) {
+    const targetInfoLen = buffer.readUInt16LE(40);
+    const targetInfoMaxLen = buffer.readUInt16LE(42);
+    const targetInfoOffset = buffer.readUInt32LE(44);
+
+    if (targetInfoLen > 0 && targetInfoOffset > 0 && targetInfoOffset < buffer.length) {
+      targetInfo = buffer.slice(targetInfoOffset, targetInfoOffset + targetInfoLen);
+    }
+  }
+
+  return {
+    serverChallenge,
+    negotiateFlags,
+    targetInfo
+  };
 };
 
 export const encodeAuthenticationMessage = (
@@ -227,7 +243,8 @@ export const encodeAuthenticationMessage = (
   serverChallenge: Buffer,
   password: string,
   negotiateFlags: number = 0,
-  forceNtlmVersion?: 'v1' | 'v2'
+  forceNtlmVersion?: 'v1' | 'v2',
+  serverTargetInfo?: Buffer  // Server's TargetInfo from Type-2 challenge
 ) => {
   const hostname = h.toUpperCase();
   const domain = d.toUpperCase();
@@ -261,7 +278,10 @@ export const encodeAuthenticationMessage = (
       const timestamp = Buffer.alloc(8);
       const now = new Date().getTime() + 11644473600000; // Convert to Windows file time
       timestamp.writeBigUInt64LE(BigInt(now * 10000));
-      const targetInfo = createTargetInfo(hostname, domain);
+
+      // Use server's TargetInfo if provided (per MS-NLMP spec), otherwise create local fallback
+      const targetInfo = serverTargetInfo || createTargetInfo(hostname, domain);
+
       ntResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, timestamp, targetInfo);
       lmResponse = createLMv2Response(ntlmv2Hash, serverChallenge, clientChallenge);
     } catch (err) {

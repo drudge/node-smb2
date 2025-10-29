@@ -1,6 +1,7 @@
 import Tree from "./Tree";
 import Client from "./Client";
 import { EventEmitter } from "events";
+import os from "os";
 import Dialect from "../protocol/smb2/Dialect";
 import Header from "../protocol/smb2/Header";
 import { generateGuid } from "../protocol/util";
@@ -67,37 +68,45 @@ class Session extends EventEmitter {
     if (this.authenticated) return;
 
     try {
+      // Get client workstation name (NetBIOS-style, not server name)
+      const clientWorkstation = os.hostname().split('.')[0].toUpperCase();
+
       await this.request({
         type: PacketType.Negotiate
       }, {
         dialects: [
           Dialect.Smb202,
-          Dialect.Smb210
+          Dialect.Smb210,
+          Dialect.Smb300,
+          Dialect.Smb302  // Add SMB 3.0.2 support for Win Server 2019/2022
         ],
         clientGuid: generateGuid(),
       });
 
       // Initial negotiation includes forceNtlmVersion if specified
+      // Use client workstation name, NOT server name
       const sessionSetupResponse = await this.request(
         { type: PacketType.SessionSetup },
-        { buffer: ntlmUtil.encodeNegotiationMessage(this.client.host, options.domain, options.forceNtlmVersion) }
+        { buffer: ntlmUtil.encodeNegotiationMessage(clientWorkstation, options.domain, options.forceNtlmVersion) }
       );
       this._id = sessionSetupResponse.header.sessionId;
 
-      // Extract server challenge (nonce)
-      const nonce = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
-      // Send authentication response with version preference
+      // Extract server challenge with negotiateFlags and targetInfo
+      const challenge = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
+
+      // Send authentication response with server's negotiateFlags and targetInfo
       const authResponse = await this.request(
         { type: PacketType.SessionSetup },
         {
           buffer: ntlmUtil.encodeAuthenticationMessage(
             options.username,
-            this.client.host,
+            clientWorkstation,  // Use client workstation, not server name
             options.domain,
-            nonce,
+            challenge.serverChallenge,
             options.password,
-            0, // Let the util determine the flags based on server response
-            options.forceNtlmVersion
+            challenge.negotiateFlags,  // Use actual negotiated flags from server
+            options.forceNtlmVersion,
+            challenge.targetInfo  // Pass server's targetInfo
           )
         }
       );
