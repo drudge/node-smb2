@@ -11,7 +11,9 @@
   "scripts": {
     "start": "nodemon",
     "build": "tsc --build",
-    "lint": "tslint --project ."
+    "lint": "tslint --project .",
+    "test:encryption": "npm run build && node -r ts-node/register ./tests/encryption-test.ts",
+    "test:quick": "node -r ts-node/register ./tests/quick-test.ts"
   },
   "files": [
     "dist"

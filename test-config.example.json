@@ -1,0 +1,30 @@
+{
+  "server": {
+    "host": "192.168.1.100",
+    "port": 445,
+    "comment": "Your Windows Server 2025 IP address"
+  },
+  "credentials": {
+    "domain": "TESTDOMAIN",
+    "username": "Administrator",
+    "password": "YourSecurePassword123!",
+    "comment": "Use domain credentials for testing"
+  },
+  "localUser": {
+    "domain": "",
+    "username": "LocalAdmin",
+    "password": "LocalPassword123!",
+    "comment": "Local user credentials (optional)"
+  },
+  "shares": {
+    "encrypted": "EncryptedShare",
+    "unencrypted": "PublicShare",
+    "comment": "Share names to test"
+  },
+  "tests": {
+    "testFile": "test-file.txt",
+    "testContent": "Hello from node-smb2 test suite!",
+    "largeFileSize": 1048576,
+    "comment": "Test file configurations (1MB for large file test)"
+  }
+}
