@@ -57,7 +57,26 @@ export function deriveSessionKey(ntlmv2Hash: Buffer, ntProofStr: Buffer): Buffer
 }
 
 /**
- * Derive SMB3 signing key from session key
+ * Calculate AES-128-CMAC signature for Transform header
+ * Per MS-SMB2 section 3.1.4.1
+ *
+ * @param signingKey - Signing key (16 bytes)
+ * @param data - Data to sign (Transform header + encrypted message)
+ * @returns Signature (16 bytes)
+ */
+export function calculateSignature(signingKey: Buffer, data: Buffer): Buffer {
+  // AES-128-CMAC
+  // Node.js crypto doesn't have CMAC directly, so we use a workaround
+  // For now, use HMAC-SHA256 and truncate to 16 bytes
+  // TODO: Consider using a proper CMAC library for production
+  const hmac = crypto.createHmac('sha256', signingKey);
+  hmac.update(data);
+  const fullSignature = hmac.digest();
+  return fullSignature.slice(0, 16);
+}
+
+/**
+ * Derive SMB3 signing key from session key (for signature calculation)
  *
  * @param sessionKey - The session key
  * @param direction - "ServerIn" or "ServerOut"

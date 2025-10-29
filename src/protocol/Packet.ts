@@ -14,6 +14,12 @@ export default class Packet {
     return structureUtil.parseValue(buffer, protocolIdStructureField) as string;
   }
 
+  static isTransformHeader(buffer: Buffer): boolean {
+    if (buffer.length < 4) return false;
+    const protocolId = Packet.parseProtocolId(buffer);
+    return protocolId === protocolIds.transform;
+  }
+
   static getChunks(buffer: Buffer) {
     const chunks: Buffer[] = [];
     while (buffer.length > 4) {

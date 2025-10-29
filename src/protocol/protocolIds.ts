@@ -15,3 +15,12 @@ export const smb2 = Buffer
     "B".charCodeAt(0)
   ])
   .toString("hex");
+
+export const transform = Buffer
+  .from([
+    0xfd,
+    "S".charCodeAt(0),
+    "M".charCodeAt(0),
+    "B".charCodeAt(0)
+  ])
+  .toString("hex");

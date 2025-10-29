@@ -7,7 +7,7 @@ import Header from "../protocol/smb2/Header";
 import { generateGuid } from "../protocol/util";
 import * as ntlmUtil from "../protocol/ntlm/util";
 import PacketType from "../protocol/smb2/PacketType";
-import { deriveEncryptionKey, deriveDecryptionKey } from "../protocol/smb3/crypto";
+import { deriveEncryptionKey, deriveDecryptionKey, deriveSigningKey } from "../protocol/smb3/crypto";
 
 export interface AuthenticateOptions {
   domain: string;
@@ -37,7 +37,9 @@ class Session extends EventEmitter {
   // SMB3 encryption support
   encryptionKey?: Buffer;
   decryptionKey?: Buffer;
+  signingKey?: Buffer;
   encryptionEnabled: boolean = false;
+  dialectRevision?: number; // Track negotiated SMB dialect
 
   constructor(
     public client: Client
@@ -90,11 +92,15 @@ class Session extends EventEmitter {
         capabilities: 0  // Will be filled by structure defaults
       });
 
-      // Check if server supports encryption
+      // Store dialect revision and check encryption support
+      this.dialectRevision = negotiateResponse.body.dialectRevision;
       const serverCapabilities = negotiateResponse.body.capabilities || 0;
       const serverSupportsEncryption = (serverCapabilities & 0x00000040) !== 0; // Encryption capability
-      if (serverSupportsEncryption) {
-        console.log("Server supports SMB3 encryption");
+
+      // Enable encryption if we negotiated SMB 3.x and server supports it
+      const isSmb3 = this.dialectRevision >= 0x0300; // SMB 3.0 or higher
+      if (isSmb3 && serverSupportsEncryption) {
+        console.log(`Server supports SMB3 encryption (dialect ${this.dialectRevision.toString(16)})`);
       }
 
       // Initial negotiation includes forceNtlmVersion if specified
@@ -127,12 +133,19 @@ class Session extends EventEmitter {
         }
       );
 
-      // Derive SMB3 encryption keys if sessionKey is available (NTLMv2)
-      if (authResult.sessionKey) {
+      // Derive SMB3 encryption keys if sessionKey is available (NTLMv2) and SMB 3.x negotiated
+      if (authResult.sessionKey && isSmb3) {
         this.encryptionKey = deriveEncryptionKey(authResult.sessionKey, 'ServerIn');
         this.decryptionKey = deriveDecryptionKey(authResult.sessionKey, 'ServerIn');
-        // Encryption will be enabled if server requires it or negotiates it
-        console.log("SMB3 encryption keys derived successfully");
+        this.signingKey = deriveSigningKey(authResult.sessionKey, 'ServerIn');
+
+        // Enable encryption if server supports it
+        if (serverSupportsEncryption) {
+          this.encryptionEnabled = true;
+          console.log("SMB3 encryption ENABLED - keys derived successfully");
+        } else {
+          console.log("SMB3 encryption keys derived (ready but not enabled)");
+        }
       }
 
       this.authenticated = true;

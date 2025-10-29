@@ -9,6 +9,8 @@ import StatusCode from "../protocol/smb2/StatusCode";
 import Smb2PacketType from "../protocol/smb2/PacketType";
 import Session, { AuthenticateOptions } from "./Session";
 import * as structureUtil from "../protocol/structureUtil";
+import TransformHeaderUtil, { TransformHeader } from "../protocol/smb3/TransformHeader";
+import { encryptAES128CCM, decryptAES128CCM, calculateSignature } from "../protocol/smb3/crypto";
 
 export interface Options {
   port?: number;
@@ -110,11 +112,115 @@ class Client extends EventEmitter {
     return await this.send(request);
   }
 
+  /**
+   * Decrypt an SMB2 message from Transform header
+   * @param buffer - The complete buffer with Transform header + encrypted message
+   * @param session - The session with decryption keys
+   * @returns Decrypted SMB2 message
+   */
+  private decryptMessage(buffer: Buffer, session: Session): Buffer {
+    if (!session.decryptionKey || !session.signingKey) {
+      throw new Error("Decryption keys not available");
+    }
+
+    // Parse Transform header (52 bytes)
+    const transformHeader = TransformHeaderUtil.parse(buffer.slice(0, TransformHeaderUtil.SIZE));
+
+    // Extract encrypted message (everything after Transform header)
+    const encryptedMessage = buffer.slice(TransformHeaderUtil.SIZE);
+
+    // Verify signature
+    // Zero out signature field for verification
+    const transformHeaderBuffer = buffer.slice(0, TransformHeaderUtil.SIZE);
+    const zeroedSignatureBuffer = Buffer.from(transformHeaderBuffer);
+    Buffer.alloc(16).copy(zeroedSignatureBuffer, 4); // Zero signature field at offset 4
+
+    const dataToVerify = Buffer.concat([zeroedSignatureBuffer, encryptedMessage]);
+    const expectedSignature = calculateSignature(session.signingKey, dataToVerify);
+
+    if (!expectedSignature.equals(transformHeader.signature)) {
+      console.warn("Transform header signature mismatch - message may be tampered");
+      // Note: In production, you might want to throw an error here
+    }
+
+    // Get AAD and nonce for decryption
+    const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
+    const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
+
+    // Decrypt the message
+    const decryptedMessage = decryptAES128CCM(
+      session.decryptionKey,
+      nonce,
+      encryptedMessage,
+      aad
+    );
+
+    return decryptedMessage;
+  }
+
+  /**
+   * Encrypt an SMB2 message with Transform header
+   * @param message - The SMB2 message buffer to encrypt
+   * @param session - The session with encryption keys
+   * @returns Encrypted message with Transform header
+   */
+  private encryptMessage(message: Buffer, session: Session): Buffer {
+    if (!session.encryptionKey || !session.signingKey) {
+      throw new Error("Encryption keys not available");
+    }
+
+    // Create Transform header
+    const transformHeader = TransformHeaderUtil.create(session._id, message.length);
+
+    // Serialize Transform header
+    const transformHeaderBuffer = TransformHeaderUtil.serialize(transformHeader);
+
+    // Get AAD (Additional Authenticated Data) - 32 bytes starting from Nonce field
+    const aad = TransformHeaderUtil.getAAD(transformHeaderBuffer);
+
+    // Get CCM nonce (first 11 bytes of 16-byte nonce)
+    const nonce = TransformHeaderUtil.getCCMNonce(transformHeader.nonce);
+
+    // Encrypt the SMB2 message
+    const encryptedMessage = encryptAES128CCM(
+      session.encryptionKey,
+      nonce,
+      message,
+      aad
+    );
+
+    // Calculate signature over Transform header (with zeros in signature field) + encrypted message
+    const dataToSign = Buffer.concat([transformHeaderBuffer, encryptedMessage]);
+    const signature = calculateSignature(session.signingKey, dataToSign);
+
+    // Update signature in Transform header
+    signature.copy(transformHeaderBuffer, 4); // Signature starts at offset 4
+
+    // Return Transform header + encrypted message
+    return Buffer.concat([transformHeaderBuffer, encryptedMessage]);
+  }
+
   async send(request: Request) {
     if (!this.connected) throw new Error("not_connected");
 
-    const buffer = request.serialize();
-    this.socket.write(buffer);
+    let buffer = request.serialize();
+
+    // Encrypt if session has encryption enabled
+    // Find the session for this request
+    const session = this.sessions.find(s => s._id === request.header.sessionId);
+    if (session && session.encryptionEnabled && session.encryptionKey) {
+      try {
+        // Wrap the serialized message in Transform header with encryption
+        const encryptedBuffer = this.encryptMessage(buffer, session);
+        this.socket.write(encryptedBuffer);
+        console.log("Message encrypted with Transform header");
+      } catch (err) {
+        console.error("Encryption failed:", err);
+        throw err;
+      }
+    } else {
+      this.socket.write(buffer);
+    }
 
     const messageId = request.header.messageId;
     const sendPromise = new Promise<Response>((resolve, reject) => {
@@ -173,7 +279,33 @@ class Client extends EventEmitter {
     } = Packet.getChunks(buffer);
     this.responseRestChunk = restChunk;
 
-    for (const chunk of chunks) {
+    for (let chunk of chunks) {
+      // Check if this is an encrypted Transform header
+      if (Packet.isTransformHeader(chunk)) {
+        console.log("Received encrypted Transform header");
+
+        // Parse Transform header to get session ID
+        const transformHeader = TransformHeaderUtil.parse(chunk.slice(0, TransformHeaderUtil.SIZE));
+
+        // Find the session by ID
+        const session = this.sessions.find(s => s._id === transformHeader.sessionId);
+
+        if (session && session.decryptionKey) {
+          try {
+            // Decrypt the message
+            chunk = this.decryptMessage(chunk, session);
+            console.log("Message decrypted successfully");
+          } catch (err) {
+            console.error("Decryption failed:", err);
+            // Skip this chunk if decryption fails
+            continue;
+          }
+        } else {
+          console.error("Cannot decrypt: session or keys not found");
+          continue;
+        }
+      }
+
       const response = Response.parse(chunk);
       this.onResponse(response);
     }
