@@ -236,6 +236,11 @@ export const decodeChallengeMessage = (buffer: Buffer) => {
   };
 };
 
+export interface AuthenticationResult {
+  buffer: Buffer;
+  sessionKey?: Buffer;  // For SMB3 encryption support
+}
+
 export const encodeAuthenticationMessage = (
   username: string,
   h: string,
@@ -245,12 +250,13 @@ export const encodeAuthenticationMessage = (
   negotiateFlags: number = 0,
   forceNtlmVersion?: 'v1' | 'v2',
   serverTargetInfo?: Buffer  // Server's TargetInfo from Type-2 challenge
-) => {
+): AuthenticationResult => {
   const hostname = h.toUpperCase();
   const domain = d.toUpperCase();
   const ntHash = createNtHash(password);
   let ntResponse: Buffer;
   let lmResponse: Buffer;
+  let sessionKey: Buffer | undefined;
   // Determine which NTLM version to use
   const useV1 = forceNtlmVersion === 'v1' ||
                (isNTLMv1(negotiateFlags) && forceNtlmVersion !== 'v2') ||
@@ -284,6 +290,14 @@ export const encodeAuthenticationMessage = (
 
       ntResponse = createNtlmV2Response(ntlmv2Hash, serverChallenge, clientChallenge, timestamp, targetInfo);
       lmResponse = createLMv2Response(ntlmv2Hash, serverChallenge, clientChallenge);
+
+      // Derive session key for SMB3 encryption
+      // SessionKey = HMAC_MD5(NTLMv2Hash, NTProofStr)
+      // NTProofStr is the first 16 bytes of the NTLMv2 response
+      const ntProofStr = ntResponse.slice(0, 16);
+      const hmac = crypto.createHmac('md5', ntlmv2Hash);
+      hmac.update(ntProofStr);
+      sessionKey = hmac.digest();
     } catch (err) {
       console.error("Error creating NTLMv2 response, falling back to NTLMv1:", err);
       // Fall back to NTLMv1 if NTLMv2 creation fails
@@ -295,6 +309,7 @@ export const encodeAuthenticationMessage = (
       ntHashPadded.fill(0x00, 16);
       ntResponse = createResponse(ntHashPadded, serverChallenge);
       lmResponse = createResponse(lmHash, serverChallenge);
+      // NTLMv1 does not provide a session key for SMB3
     }
   }
 
@@ -374,7 +389,10 @@ export const encodeAuthenticationMessage = (
   lmResponse.copy(buffer, lmResponseOffset, 0, lmResponseLength);
   ntResponse.copy(buffer, ntResponseOffset, 0, ntResponseLength);
 
-  return buffer;
+  return {
+    buffer,
+    sessionKey
+  };
 };
 
 // Helper for creating LMv2 response (simplified for compatibility)

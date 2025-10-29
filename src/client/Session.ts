@@ -7,6 +7,7 @@ import Header from "../protocol/smb2/Header";
 import { generateGuid } from "../protocol/util";
 import * as ntlmUtil from "../protocol/ntlm/util";
 import PacketType from "../protocol/smb2/PacketType";
+import { deriveEncryptionKey, deriveDecryptionKey } from "../protocol/smb3/crypto";
 
 export interface AuthenticateOptions {
   domain: string;
@@ -32,6 +33,11 @@ class Session extends EventEmitter {
   authenticated: boolean = false;
 
   connectedTrees: Tree[] = [];
+
+  // SMB3 encryption support
+  encryptionKey?: Buffer;
+  decryptionKey?: Buffer;
+  encryptionEnabled: boolean = false;
 
   constructor(
     public client: Client
@@ -71,7 +77,7 @@ class Session extends EventEmitter {
       // Get client workstation name (NetBIOS-style, not server name)
       const clientWorkstation = os.hostname().split('.')[0].toUpperCase();
 
-      await this.request({
+      const negotiateResponse = await this.request({
         type: PacketType.Negotiate
       }, {
         dialects: [
@@ -81,7 +87,15 @@ class Session extends EventEmitter {
           Dialect.Smb302  // Add SMB 3.0.2 support for Win Server 2019/2022
         ],
         clientGuid: generateGuid(),
+        capabilities: 0  // Will be filled by structure defaults
       });
+
+      // Check if server supports encryption
+      const serverCapabilities = negotiateResponse.body.capabilities || 0;
+      const serverSupportsEncryption = (serverCapabilities & 0x00000040) !== 0; // Encryption capability
+      if (serverSupportsEncryption) {
+        console.log("Server supports SMB3 encryption");
+      }
 
       // Initial negotiation includes forceNtlmVersion if specified
       // Use client workstation name, NOT server name
@@ -95,21 +109,31 @@ class Session extends EventEmitter {
       const challenge = ntlmUtil.decodeChallengeMessage(sessionSetupResponse.body.buffer as Buffer);
 
       // Send authentication response with server's negotiateFlags and targetInfo
+      const authResult = ntlmUtil.encodeAuthenticationMessage(
+        options.username,
+        clientWorkstation,  // Use client workstation, not server name
+        options.domain,
+        challenge.serverChallenge,
+        options.password,
+        challenge.negotiateFlags,  // Use actual negotiated flags from server
+        options.forceNtlmVersion,
+        challenge.targetInfo  // Pass server's targetInfo
+      );
+
       const authResponse = await this.request(
         { type: PacketType.SessionSetup },
         {
-          buffer: ntlmUtil.encodeAuthenticationMessage(
-            options.username,
-            clientWorkstation,  // Use client workstation, not server name
-            options.domain,
-            challenge.serverChallenge,
-            options.password,
-            challenge.negotiateFlags,  // Use actual negotiated flags from server
-            options.forceNtlmVersion,
-            challenge.targetInfo  // Pass server's targetInfo
-          )
+          buffer: authResult.buffer
         }
       );
+
+      // Derive SMB3 encryption keys if sessionKey is available (NTLMv2)
+      if (authResult.sessionKey) {
+        this.encryptionKey = deriveEncryptionKey(authResult.sessionKey, 'ServerIn');
+        this.decryptionKey = deriveDecryptionKey(authResult.sessionKey, 'ServerIn');
+        // Encryption will be enabled if server requires it or negotiates it
+        console.log("SMB3 encryption keys derived successfully");
+      }
 
       this.authenticated = true;
       this.emit("authenticate", this);
