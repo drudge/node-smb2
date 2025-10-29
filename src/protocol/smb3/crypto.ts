@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import aesCmac from "node-aes-cmac";
 
 /**
  * SMB3KDF - Key Derivation Function for SMB 3.x
@@ -65,14 +66,9 @@ export function deriveSessionKey(ntlmv2Hash: Buffer, ntProofStr: Buffer): Buffer
  * @returns Signature (16 bytes)
  */
 export function calculateSignature(signingKey: Buffer, data: Buffer): Buffer {
-  // AES-128-CMAC
-  // Node.js crypto doesn't have CMAC directly, so we use a workaround
-  // For now, use HMAC-SHA256 and truncate to 16 bytes
-  // TODO: Consider using a proper CMAC library for production
-  const hmac = crypto.createHmac('sha256', signingKey);
-  hmac.update(data);
-  const fullSignature = hmac.digest();
-  return fullSignature.slice(0, 16);
+  // AES-128-CMAC per MS-SMB2 spec
+  const signature = aesCmac(signingKey, data);
+  return Buffer.from(signature, 'hex');
 }
 
 /**
