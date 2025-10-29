@@ -53,7 +53,10 @@ export class TransformHeaderUtil {
 
     // SessionId (8 bytes)
     const sessionIdBuf = Buffer.from(header.sessionId, 'hex');
-    sessionIdBuf.copy(buffer, offset);
+    if (sessionIdBuf.length !== 8) {
+      throw new Error(`Invalid SessionId length: expected 8 bytes, got ${sessionIdBuf.length} bytes. SessionId hex: ${header.sessionId}`);
+    }
+    sessionIdBuf.copy(buffer, offset, 0, 8);
     offset += 8;
 
     return buffer;

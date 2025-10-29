@@ -86,7 +86,7 @@ class Session extends EventEmitter {
           Dialect.Smb202,
           Dialect.Smb210,
           Dialect.Smb300,
-          Dialect.Smb302  // Add SMB 3.0.2 support for Win Server 2019/2022
+          Dialect.Smb302  // SMB 3.0.2 - 3.1.1 would need negotiate contexts
         ],
         clientGuid: generateGuid(),
         capabilities: 0  // Will be filled by structure defaults
